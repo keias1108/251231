@@ -1,0 +1,19 @@
+{
+  "name": "ecosystem-simulation",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lil-gui": "^0.19.2",
+    "wgpu-matrix": "^3.0.2"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.44",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10"
+  }
+}

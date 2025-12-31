@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ecosystem Simulation</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      overflow: hidden;
+      background: #1a1a2e;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    #app {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    canvas {
+      display: block;
+    }
+    #overlay {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: #fff;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #stats {
+      background: rgba(0, 0, 0, 0.6);
+      padding: 8px 12px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    #info-panel {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 12px;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 13px;
+      min-width: 200px;
+      display: none;
+      z-index: 100;
+    }
+    #info-panel.visible {
+      display: block;
+    }
+    #error {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(220, 53, 69, 0.9);
+      color: #fff;
+      padding: 20px 30px;
+      border-radius: 8px;
+      text-align: center;
+      display: none;
+      z-index: 200;
+    }
+    #error.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="overlay">
+    <div id="stats">Loading...</div>
+  </div>
+  <div id="info-panel"></div>
+  <div id="error">
+    <h3>WebGPU Not Supported</h3>
+    <p>Please use a browser that supports WebGPU (Chrome 113+, Edge 113+)</p>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
