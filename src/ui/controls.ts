@@ -54,22 +54,22 @@ export function createControls(simulation: Simulation): Controls {
   // 안정화 폴더
   const stabFolder = gui.addFolder('Stabilizers');
 
-  stabFolder.add(simConfig, 'saturationK', 0.1, 5, 0.1)
+  stabFolder.add(simConfig, 'saturationK', 0.05, 20, 0.05)
     .name('Saturation K')
     .onChange(() => simulation.updateConfig(simConfig));
 
-  stabFolder.add(simConfig, 'densityPenalty', 0, 1, 0.05)
+  stabFolder.add(simConfig, 'densityPenalty', 0, 5, 0.05)
     .name('Density Penalty')
     .onChange(() => simulation.updateConfig(simConfig));
 
   // 에너지/섭취 스케일 (UX: 먹고/죽는지 체감)
   const dynamicsFolder = gui.addFolder('Dynamics');
 
-  dynamicsFolder.add(simConfig, 'uptakeScale', 0.05, 2.0, 0.05)
+  dynamicsFolder.add(simConfig, 'uptakeScale', 0.01, 10.0, 0.05)
     .name('Uptake Scale')
     .onChange(() => simulation.updateConfig(simConfig));
 
-  dynamicsFolder.add(simConfig, 'energyCostScale', 0.5, 20.0, 0.5)
+  dynamicsFolder.add(simConfig, 'energyCostScale', 0.1, 100.0, 0.5)
     .name('Energy Cost Scale')
     .onChange(() => simulation.updateConfig(simConfig));
 

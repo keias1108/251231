@@ -59,6 +59,12 @@ struct Metrics {
   uptakeMicro: atomic<u32>,
 }
 
+struct FreeList {
+  count: atomic<u32>,
+  _pad0: vec3<u32>,
+  indices: array<u32>,
+}
+
 // 모드 상수
 const MODE_EXPLORE: u32 = 0u;
 const MODE_INTAKE: u32 = 1u;
@@ -73,6 +79,30 @@ const MODE_REPRODUCE: u32 = 3u;
 @group(0) @binding(5) var<storage, read_write> pheromoneField: array<f32>;
 @group(0) @binding(6) var<storage, read_write> agentCount: atomic<u32>;
 @group(0) @binding(7) var<storage, read_write> metrics: Metrics;
+@group(0) @binding(8) var<storage, read_write> freeList: FreeList;
+
+fn freeListPush(index: u32) {
+  let slot = atomicAdd(&freeList.count, 1u);
+  if (slot < params.maxAgents) {
+    freeList.indices[slot] = index;
+  } else {
+    // overflow protection
+    atomicSub(&freeList.count, 1u);
+  }
+}
+
+fn freeListPop() -> i32 {
+  loop {
+    let count = atomicLoad(&freeList.count);
+    if (count == 0u) {
+      return -1;
+    }
+    let res = atomicCompareExchangeWeak(&freeList.count, count, count - 1u);
+    if (res.exchanged) {
+      return i32(freeList.indices[count - 1u]);
+    }
+  }
+}
 
 fn fieldIdx(x: f32, y: f32) -> u32 {
   let size = f32(params.gridSize);
@@ -318,6 +348,7 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
     agent.alive = 0u;
     atomicAdd(&metrics.deaths, 1u);
     atomicSub(&metrics.alive, 1u);
+    freeListPush(idx);
   } else if (newMode == MODE_REPRODUCE && agent.cooldown <= 0.0) {
     // 번식 시도 (실제 번식은 별도 커널에서 처리)
     agent.energy *= 0.5;  // 에너지 분할
@@ -341,11 +372,17 @@ fn processReproduction(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
 
-  // 새 에이전트 슬롯 찾기
-  let newIdx = atomicAdd(&agentCount, 1u);
-  if (newIdx >= params.maxAgents) {
-    atomicSub(&agentCount, 1u);
-    return;
+  // 새 에이전트 슬롯 찾기 (dead slot 재사용 우선)
+  var newIdx: u32 = 0u;
+  let reused = freeListPop();
+  if (reused >= 0) {
+    newIdx = u32(reused);
+  } else {
+    newIdx = atomicAdd(&agentCount, 1u);
+    if (newIdx >= params.maxAgents) {
+      atomicSub(&agentCount, 1u);
+      return;
+    }
   }
 
   let seed = idx * 7919u + u32(params.time * 1000.0);

@@ -14,6 +14,7 @@ export interface AgentSystem {
   countBuffer: GPUBuffer;
   paramsBuffer: GPUBuffer;
   metricsBuffer: GPUBuffer;
+  freeListBuffer: GPUBuffer;
 
   update(encoder: GPUCommandEncoder, fieldSystem: FieldSystem, deltaTime: number, time: number): void;
   getBuffer(): GPUBuffer;
@@ -30,7 +31,9 @@ export function createAgentSystem(
   device: GPUDevice,
   config: SimulationConfig
 ): AgentSystem {
-  const maxAgents = config.maxAgentCount;
+  const deviceCap = Math.floor(device.limits.maxStorageBufferBindingSize / AGENT_STRUCT_SIZE);
+  const maxAgents = Math.max(1, Math.min(config.maxAgentCount, deviceCap));
+  config.maxAgentCount = maxAgents;
   const initialCount = config.initialAgentCount;
 
   // 에이전트 버퍼 크기 (96 bytes per agent)
@@ -123,6 +126,7 @@ export function createAgentSystem(
       { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
     ],
   });
 
@@ -162,6 +166,15 @@ export function createAgentSystem(
     metricsInit,
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     'agentMetrics'
+  );
+
+  // Free-list (dead slot reuse): [freeCount, pad*3, indices...]
+  const freeListInit = new Uint32Array(4 + maxAgents);
+  const freeListBuffer = createBuffer(
+    device,
+    freeListInit,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    'agentFreeList'
   );
 
   // 카운트/메트릭 읽기용 버퍼
@@ -209,6 +222,7 @@ export function createAgentSystem(
         { binding: 5, resource: { buffer: fieldSystem.getPheromoneBuffer() } },
         { binding: 6, resource: { buffer: countBuffer } },
         { binding: 7, resource: { buffer: metricsBuffer } },
+        { binding: 8, resource: { buffer: freeListBuffer } },
       ],
     });
 
@@ -271,6 +285,7 @@ export function createAgentSystem(
     countBuffer,
     paramsBuffer,
     metricsBuffer,
+    freeListBuffer,
     update,
     getBuffer: () => buffer,
     getAgentCount: () => currentAgentCount,

@@ -42,7 +42,7 @@ export interface RenderConfig {
 export const DEFAULT_CONFIG: SimulationConfig = {
   gridSize: 1024,
   initialAgentCount: 500,      // 적당한 시작 수 (감소)
-  maxAgentCount: 3000,         // 최대 수 제한
+  maxAgentCount: 20000,        // 기본 capacity (RTX2070급에서 여유)
   resourceGeneration: 0.02,    // 자원 생성률 (패치당)
   diffusionRate: 0.15,         // 확산 빠르게
   decayRate: 0.01,             // 소산 느리게 (자원 유지)
