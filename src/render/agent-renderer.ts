@@ -65,6 +65,8 @@ export function createAgentRenderer(
       { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+      { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+      { binding: 5, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
     ],
   });
 
@@ -101,7 +103,7 @@ export function createAgentRenderer(
     },
     depthStencil: {
       format: 'depth24plus',
-      depthWriteEnabled: false,  // 투명 오브젝트
+      depthWriteEnabled: true,  // depth 기록 활성화
       depthCompare: 'less',
     },
   });
@@ -139,7 +141,7 @@ export function createAgentRenderer(
     },
     depthStencil: {
       format: 'depth24plus',
-      depthWriteEnabled: false,
+      depthWriteEnabled: true,  // depth 기록 활성화
       depthCompare: 'less',
     },
   });
@@ -170,6 +172,8 @@ export function createAgentRenderer(
     device.queue.writeBuffer(cameraBuffer, 0, cameraData.buffer);
 
     // 파라미터 업데이트
+    paramsData[1] = config.heightScale;
+    paramsData[2] = config.agentScale;
     paramsData[3] = time;
     device.queue.writeBuffer(paramsBuffer, 0, paramsData.buffer);
 
@@ -184,6 +188,8 @@ export function createAgentRenderer(
           { binding: 1, resource: { buffer: paramsBuffer } },
           { binding: 2, resource: { buffer: agentBuffer } },
           { binding: 3, resource: { buffer: fieldSystem.getResourceBuffer() } },
+          { binding: 4, resource: { buffer: fieldSystem.getTerrainBuffer() } },
+          { binding: 5, resource: { buffer: fieldSystem.getHeightBuffer() } },
         ],
       });
       lastAgentBuffer = agentBuffer;

@@ -25,21 +25,31 @@ export interface Camera {
   rotate(dx: number, dy: number): void;
   zoomBy(delta: number): void;
   setFollowTarget(id: number | null): void;
+  resetToDefault(): void;
   screenToWorld(screenX: number, screenY: number, width: number, height: number): Float32Array;
 }
 
 export function createCamera(gridSize: number): Camera {
   const halfSize = gridSize / 2;
 
-  // 초기 위치: 2.5D 뷰를 위해 더 낮고 가까운 위치
-  // Y는 높이맵이 보이도록 적당히, Z는 경사각이 잘 보이도록
-  const position = new Float32Array([halfSize, gridSize * 0.35, halfSize + gridSize * 0.35]);
+  // 초기 위치: 2.5D 아이소메트릭 스타일 뷰
+  // 구면 좌표 기반으로 카메라 위치 계산
+  const defaultDistance = gridSize * 0.7;
+  const defaultPitch = -0.75;  // 약 43도 각도 (제대로 된 2.5D 느낌)
+  const defaultYaw = Math.PI / 6;  // 약간의 회전으로 입체감 부여
+
+  // 초기 위치 계산
+  const initialX = halfSize + Math.sin(defaultYaw) * Math.cos(defaultPitch) * defaultDistance;
+  const initialY = -Math.sin(defaultPitch) * defaultDistance;
+  const initialZ = halfSize + Math.cos(defaultYaw) * Math.cos(defaultPitch) * defaultDistance;
+
+  const position = new Float32Array([initialX, initialY, initialZ]);
   const target = new Float32Array([halfSize, 0, halfSize]);
   const up = new Float32Array([0, 1, 0]);
 
   let zoom = 1.0;
-  let rotationX = -0.45;  // 약 26도 각도로 바라봄 (더 완만하게)
-  let rotationY = 0;
+  let rotationX = defaultPitch;
+  let rotationY = defaultYaw;
 
   let followTarget: number | null = null;
 
@@ -62,9 +72,9 @@ export function createCamera(gridSize: number): Camera {
     // 뷰 매트릭스 계산
     mat4.lookAt(position, target, up, viewMatrix);
 
-    // 프로젝션 매트릭스 (원근)
+    // 프로젝션 매트릭스 (원근) - FOV 고정
     const aspect = width / height;
-    const fov = Math.PI / 4 / zoom;  // 줌에 따라 FOV 조정
+    const fov = Math.PI / 4;  // 45도 FOV 고정
     const near = 1;
     const far = gridSize * 5;
     mat4.perspective(fov, aspect, near, far, projMatrix);
@@ -74,39 +84,45 @@ export function createCamera(gridSize: number): Camera {
   }
 
   function pan(dx: number, dy: number): void {
-    // 화면 좌표를 월드 좌표 이동으로 변환
-    const panSpeed = 2.0 / zoom;
+    // 월드 좌표 기준 이동 (그리드 정렬)
+    const panSpeed = (gridSize / 400) / zoom;
 
-    // 카메라의 로컬 축 계산
-    const forward = vec3.normalize(vec3.subtract(target, position));
-    const right = vec3.normalize(vec3.cross(forward, up));
-    const localUp = vec3.cross(right, forward);
+    // 카메라 yaw 기준으로 월드 좌표 이동 계산
+    const cosY = Math.cos(rotationY);
+    const sinY = Math.sin(rotationY);
 
-    // 이동 적용
-    const moveX = vec3.scale(right, -dx * panSpeed);
-    const moveZ = vec3.scale(localUp, dy * panSpeed);
+    // 화면 드래그를 월드 XZ 평면 이동으로 변환
+    const worldMoveX = (-dx * cosY + dy * sinY) * panSpeed;
+    const worldMoveZ = (-dx * sinY - dy * cosY) * panSpeed;
 
-    targetPosition[0] += moveX[0] + moveZ[0];
-    targetPosition[2] += moveX[2] + moveZ[2];
-    targetLookAt[0] += moveX[0] + moveZ[0];
-    targetLookAt[2] += moveX[2] + moveZ[2];
+    targetPosition[0] += worldMoveX;
+    targetPosition[2] += worldMoveZ;
+    targetLookAt[0] += worldMoveX;
+    targetLookAt[2] += worldMoveZ;
 
     followTarget = null;  // 수동 이동 시 추적 해제
   }
 
   function rotate(dx: number, dy: number): void {
-    const rotateSpeed = 0.005;
+    const rotateSpeed = 0.01;  // 감도 2배 증가
     rotationY += dx * rotateSpeed;
-    rotationX += dy * rotateSpeed;
+    rotationX -= dy * rotateSpeed;  // 반전 (자연스러운 느낌)
 
-    // 피치 제한
-    rotationX = Math.max(-Math.PI / 2 + 0.1, Math.min(-0.1, rotationX));
+    // 피치 제한 (-85° ~ -11° 범위)
+    rotationX = Math.max(-Math.PI / 2 + 0.05, Math.min(-0.2, rotationX));
 
-    // 새 카메라 위치 계산
-    const distance = vec3.length(vec3.subtract(position, target)) / zoom;
-    const newX = target[0] + Math.sin(rotationY) * Math.cos(rotationX) * distance;
-    const newY = target[1] - Math.sin(rotationX) * distance;
-    const newZ = target[2] + Math.cos(rotationY) * Math.cos(rotationX) * distance;
+    // 오빗 스타일: look-at 중심으로 회전
+    updateOrbitPosition();
+  }
+
+  function updateOrbitPosition(): void {
+    // zoom을 거리에 반영 (zoom이 크면 가깝게, 작으면 멀게)
+    const baseDistance = defaultDistance;
+    const distance = baseDistance / zoom;
+
+    const newX = targetLookAt[0] + Math.sin(rotationY) * Math.cos(rotationX) * distance;
+    const newY = targetLookAt[1] - Math.sin(rotationX) * distance;
+    const newZ = targetLookAt[2] + Math.cos(rotationY) * Math.cos(rotationX) * distance;
 
     targetPosition[0] = newX;
     targetPosition[1] = newY;
@@ -114,22 +130,33 @@ export function createCamera(gridSize: number): Camera {
   }
 
   function zoomBy(delta: number): void {
-    const zoomSpeed = 0.001;
+    const zoomSpeed = 0.002;  // 감도 증가
     zoom *= 1 - delta * zoomSpeed;
-    zoom = Math.max(0.2, Math.min(5.0, zoom));
+    zoom = Math.max(0.3, Math.min(3.0, zoom));  // 범위 조정
 
-    // 카메라 위치 조정
-    const direction = vec3.normalize(vec3.subtract(target, position));
-    const distance = vec3.length(vec3.subtract(position, target));
-    const newDistance = distance / zoom;
-
-    targetPosition[0] = target[0] - direction[0] * newDistance;
-    targetPosition[1] = target[1] - direction[1] * newDistance;
-    targetPosition[2] = target[2] - direction[2] * newDistance;
+    // 거리 기반 줌 (FOV 고정)
+    updateOrbitPosition();
   }
 
   function setFollowTarget(id: number | null): void {
     followTarget = id;
+  }
+
+  function resetToDefault(): void {
+    // 기본값으로 리셋
+    zoom = 1.0;
+    rotationX = defaultPitch;
+    rotationY = defaultYaw;
+
+    // 그리드 중앙을 바라보도록
+    targetLookAt[0] = halfSize;
+    targetLookAt[1] = 0;
+    targetLookAt[2] = halfSize;
+
+    // 카메라 위치 재계산
+    updateOrbitPosition();
+
+    followTarget = null;
   }
 
   function screenToWorld(
@@ -180,6 +207,7 @@ export function createCamera(gridSize: number): Camera {
     rotate,
     zoomBy,
     setFollowTarget,
+    resetToDefault,
     screenToWorld,
   };
 }

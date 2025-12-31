@@ -8,10 +8,14 @@ import { createSimulation } from './core/simulation';
 import { createControls } from './ui/controls';
 import { createInteraction } from './ui/interaction';
 import { createStats } from './ui/stats';
+import { createLegend } from './ui/legend';
+import { createProbeUI } from './ui/probe';
+import { createAgentInspector } from './ui/agent-inspector';
 
 async function main(): Promise<void> {
   const canvas = document.getElementById('canvas') as HTMLCanvasElement;
   const statsElement = document.getElementById('stats') as HTMLElement;
+  const infoPanel = document.getElementById('info-panel') as HTMLElement;
   const errorElement = document.getElementById('error') as HTMLElement;
 
   try {
@@ -28,6 +32,9 @@ async function main(): Promise<void> {
     const controls = createControls(simulation);
     const interaction = createInteraction(canvas, simulation.getCamera());
     const stats = createStats(simulation, statsElement);
+    const legend = createLegend(infoPanel);
+    const probeUI = createProbeUI(canvas, simulation.getCamera(), simulation, legend.getProbeElement());
+    const inspector = createAgentInspector(canvas, simulation.getCamera(), simulation);
 
     // 시뮬레이션 시작
     console.log('Starting simulation...');
@@ -47,6 +54,9 @@ async function main(): Promise<void> {
       controls.destroy();
       interaction.destroy();
       stats.destroy();
+      probeUI.destroy();
+      legend.destroy();
+      inspector.destroy();
     });
 
   } catch (error) {

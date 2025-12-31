@@ -23,9 +23,10 @@ struct RenderParams {
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> params: RenderParams;
 @group(0) @binding(2) var<storage, read> resField: array<f32>;
-@group(0) @binding(3) var<storage, read> terrain: array<f32>;
-@group(0) @binding(4) var<storage, read> danger: array<f32>;
-@group(0) @binding(5) var<storage, read> pheromoneField: array<f32>;
+@group(0) @binding(3) var<storage, read> heightField: array<f32>;
+@group(0) @binding(4) var<storage, read> terrain: array<f32>;
+@group(0) @binding(5) var<storage, read> danger: array<f32>;
+@group(0) @binding(6) var<storage, read> pheromoneField: array<f32>;
 
 struct VertexInput {
   @builtin(vertex_index) vertexIndex: u32,
@@ -49,7 +50,8 @@ fn getFieldIndex(x: i32, y: i32) -> u32 {
 
 fn getHeight(x: i32, y: i32) -> f32 {
   let idx = getFieldIndex(x, y);
-  return resField[idx] * params.heightScale;
+  // 고도는 별도 필드(H(x))로 유지: 자원/저항(Z)은 고도에 섞지 않음
+  return heightField[idx] * params.heightScale;
 }
 
 fn calculateNormal(x: i32, y: i32) -> vec3<f32> {

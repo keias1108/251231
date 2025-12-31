@@ -13,11 +13,17 @@ export interface AgentSystem {
   buffer: GPUBuffer;
   countBuffer: GPUBuffer;
   paramsBuffer: GPUBuffer;
+  metricsBuffer: GPUBuffer;
 
   update(encoder: GPUCommandEncoder, fieldSystem: FieldSystem, deltaTime: number, time: number): void;
   getBuffer(): GPUBuffer;
   getAgentCount(): number;
+  getAliveCount(): number;
+  getRecentBirths(): number;
+  getRecentDeaths(): number;
+  getRecentUptake(): number; // energy 단위(약)
   getCountBuffer(): GPUBuffer;
+  destroy(): void;
 }
 
 export function createAgentSystem(
@@ -97,7 +103,7 @@ export function createAgentSystem(
   // 파라미터 버퍼
   const paramsBuffer = createEmptyBuffer(
     device,
-    32,
+    48,
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     'agentParams'
   );
@@ -111,10 +117,10 @@ export function createAgentSystem(
     entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
     ],
@@ -140,18 +146,33 @@ export function createAgentSystem(
   });
 
   // 파라미터 데이터
-  const paramsData = new ArrayBuffer(32);
+  const paramsData = new ArrayBuffer(48);
   const paramsView = new DataView(paramsData);
 
   let currentAgentCount = initialCount;
+  let currentAliveCount = initialCount;
+  let recentBirths = 0;
+  let recentDeaths = 0;
+  let recentUptake = 0;
 
-  // 카운트 읽기용 버퍼
+  // 메트릭 버퍼 (alive/births/deaths/uptake)
+  const metricsInit = new Uint32Array([initialCount, 0, 0, 0]);
+  const metricsBuffer = createBuffer(
+    device,
+    metricsInit,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    'agentMetrics'
+  );
+
+  // 카운트/메트릭 읽기용 버퍼
   const readbackBuffer = device.createBuffer({
-    size: 4,
+    label: 'agentCountersReadback',
+    size: 20,
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   });
 
   let bindGroup: GPUBindGroup | null = null;
+  let isReadbackMapped = false;
 
   function update(
     encoder: GPUCommandEncoder,
@@ -163,28 +184,31 @@ export function createAgentSystem(
     paramsView.setUint32(0, config.gridSize, true);
     paramsView.setUint32(4, currentAgentCount, true);
     paramsView.setUint32(8, maxAgents, true);
-    paramsView.setFloat32(12, deltaTime * config.timeScale, true);
-    paramsView.setFloat32(16, time, true);
-    paramsView.setFloat32(20, config.saturationK, true);
-    paramsView.setFloat32(24, config.densityPenalty, true);
-    paramsView.setFloat32(28, 0, true);  // padding
+    paramsView.setUint32(12, 0, true); // padding
+    paramsView.setFloat32(16, deltaTime * config.timeScale, true);
+    paramsView.setFloat32(20, time, true);
+    paramsView.setFloat32(24, config.saturationK, true);
+    paramsView.setFloat32(28, config.densityPenalty, true);
+    paramsView.setFloat32(32, config.uptakeScale, true);
+    paramsView.setFloat32(36, config.energyCostScale, true);
+    paramsView.setFloat32(40, 0, true);  // padding
+    paramsView.setFloat32(44, 0, true);  // padding
 
     device.queue.writeBuffer(paramsBuffer, 0, paramsData);
 
     // 바인드 그룹 생성
-    // 중요: 읽기 버퍼와 쓰기 버퍼가 다른 버퍼를 가리켜야 함
     bindGroup = device.createBindGroup({
       label: 'agentBindGroup',
       layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: paramsBuffer } },
         { binding: 1, resource: { buffer: buffer } },
-        { binding: 2, resource: { buffer: fieldSystem.getResourceBuffer() } },       // 읽기
-        { binding: 3, resource: { buffer: fieldSystem.getResourceOutputBuffer() } }, // 쓰기
-        { binding: 4, resource: { buffer: fieldSystem.getTerrainBuffer() } },
-        { binding: 5, resource: { buffer: fieldSystem.getDangerBuffer() } },
-        { binding: 6, resource: { buffer: fieldSystem.getPheromoneOutputBuffer() } }, // 쓰기
-        { binding: 7, resource: { buffer: countBuffer } },
+        { binding: 2, resource: { buffer: fieldSystem.getResourceBuffer() } },
+        { binding: 3, resource: { buffer: fieldSystem.getTerrainBuffer() } },
+        { binding: 4, resource: { buffer: fieldSystem.getDangerBuffer() } },
+        { binding: 5, resource: { buffer: fieldSystem.getPheromoneBuffer() } },
+        { binding: 6, resource: { buffer: countBuffer } },
+        { binding: 7, resource: { buffer: metricsBuffer } },
       ],
     });
 
@@ -204,30 +228,57 @@ export function createAgentSystem(
     reproPass.dispatchWorkgroups(workgroups);
     reproPass.end();
 
-    // 에이전트 카운트 읽기 (비동기)
-    encoder.copyBufferToBuffer(countBuffer, 0, readbackBuffer, 0, 4);
+    // 에이전트 카운트 읽기 (비동기) - 매핑 중이 아닐 때만 복사
+    if (!isReadbackMapped) {
+      encoder.copyBufferToBuffer(countBuffer, 0, readbackBuffer, 0, 4);
+      encoder.copyBufferToBuffer(metricsBuffer, 0, readbackBuffer, 4, 16);
+    }
   }
 
-  // 비동기로 에이전트 수 갱신
-  async function updateAgentCount(): Promise<void> {
-    await readbackBuffer.mapAsync(GPUMapMode.READ);
-    const data = new Uint32Array(readbackBuffer.getMappedRange());
-    currentAgentCount = Math.min(data[0], maxAgents);
-    readbackBuffer.unmap();
+  // 비동기로 카운터 갱신
+  async function updateCounters(): Promise<void> {
+    if (isReadbackMapped) return; // 이미 매핑 중이면 스킵
+
+    isReadbackMapped = true;
+    try {
+      await readbackBuffer.mapAsync(GPUMapMode.READ);
+      const data = new Uint32Array(readbackBuffer.getMappedRange());
+      currentAgentCount = Math.min(data[0], maxAgents);
+      currentAliveCount = Math.min(data[1], maxAgents);
+      recentBirths = data[2];
+      recentDeaths = data[3];
+      recentUptake = data[4];
+      readbackBuffer.unmap();
+
+      // 최근값(누적)을 리셋 (alive는 유지)
+      device.queue.writeBuffer(metricsBuffer, 4, new Uint32Array([0, 0, 0]));
+    } finally {
+      isReadbackMapped = false;
+    }
   }
 
-  // 주기적으로 에이전트 수 갱신
-  setInterval(() => {
-    updateAgentCount().catch(console.error);
+  // 주기적으로 카운터 갱신
+  const intervalId = setInterval(() => {
+    updateCounters().catch(console.error);
   }, 500);
+
+  function destroy(): void {
+    clearInterval(intervalId);
+  }
 
   return {
     buffer,
     countBuffer,
     paramsBuffer,
+    metricsBuffer,
     update,
     getBuffer: () => buffer,
     getAgentCount: () => currentAgentCount,
+    getAliveCount: () => currentAliveCount,
+    getRecentBirths: () => recentBirths,
+    getRecentDeaths: () => recentDeaths,
+    getRecentUptake: () => recentUptake / 1_000_000, // micro -> energy
     getCountBuffer: () => countBuffer,
+    destroy,
   };
 }

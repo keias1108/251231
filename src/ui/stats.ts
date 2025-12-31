@@ -27,7 +27,10 @@ export function createStats(
     statsElement.innerHTML = `
       <div>FPS: ${stats.fps}</div>
       <div>Frame: ${stats.frameTime.toFixed(1)}ms</div>
-      <div>Agents: ${stats.agentCount.toLocaleString()}</div>
+      <div>Agents: ${stats.aliveAgentCount.toLocaleString()} alive / ${stats.allocatedAgentCount.toLocaleString()} slots</div>
+      <div>Births (recent): ${stats.births.toLocaleString()}</div>
+      <div>Deaths (recent): ${stats.deaths.toLocaleString()}</div>
+      <div>Uptake (recent): ${stats.uptake.toFixed(2)}</div>
       <div>Time: ${formatTime(stats.time)}</div>
       ${stats.paused ? '<div style="color: #f39c12;">PAUSED</div>' : ''}
     `;

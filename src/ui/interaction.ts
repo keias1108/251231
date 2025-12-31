@@ -63,31 +63,57 @@ export function createInteraction(
 
   // 키보드
   function onKeyDown(e: KeyboardEvent): void {
-    const panSpeed = 20;
+    const panSpeed = 30;
+    const rotateSpeed = 50;
+    const pitchSpeed = 30;
 
-    switch (e.key) {
-      case 'ArrowUp':
+    switch (e.key.toLowerCase()) {
+      // 이동 (WASD / 화살표)
+      case 'arrowup':
       case 'w':
         camera.pan(0, -panSpeed);
         break;
-      case 'ArrowDown':
+      case 'arrowdown':
       case 's':
         camera.pan(0, panSpeed);
         break;
-      case 'ArrowLeft':
+      case 'arrowleft':
       case 'a':
         camera.pan(-panSpeed, 0);
         break;
-      case 'ArrowRight':
+      case 'arrowright':
       case 'd':
         camera.pan(panSpeed, 0);
         break;
+
+      // 회전 (Q/E)
+      case 'q':
+        camera.rotate(-rotateSpeed, 0);
+        break;
+      case 'e':
+        camera.rotate(rotateSpeed, 0);
+        break;
+
+      // 피치 (R/F)
+      case 'r':
+        camera.rotate(0, -pitchSpeed);
+        break;
+      case 'f':
+        camera.rotate(0, pitchSpeed);
+        break;
+
+      // 줌 (+/-)
       case '+':
       case '=':
         camera.zoomBy(-100);
         break;
       case '-':
         camera.zoomBy(100);
+        break;
+
+      // 리셋 (Home)
+      case 'home':
+        camera.resetToDefault();
         break;
     }
   }

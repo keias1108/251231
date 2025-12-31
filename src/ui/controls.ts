@@ -62,6 +62,17 @@ export function createControls(simulation: Simulation): Controls {
     .name('Density Penalty')
     .onChange(() => simulation.updateConfig(simConfig));
 
+  // 에너지/섭취 스케일 (UX: 먹고/죽는지 체감)
+  const dynamicsFolder = gui.addFolder('Dynamics');
+
+  dynamicsFolder.add(simConfig, 'uptakeScale', 0.05, 2.0, 0.05)
+    .name('Uptake Scale')
+    .onChange(() => simulation.updateConfig(simConfig));
+
+  dynamicsFolder.add(simConfig, 'energyCostScale', 0.5, 20.0, 0.5)
+    .name('Energy Cost Scale')
+    .onChange(() => simulation.updateConfig(simConfig));
+
   // 시각화 폴더
   const visualFolder = gui.addFolder('Visualization');
 
@@ -81,7 +92,7 @@ export function createControls(simulation: Simulation): Controls {
     .name('Show Trails')
     .onChange(() => simulation.updateRenderConfig(renderConfigState));
 
-  visualFolder.add(simConfig, 'heightScale', 0.1, 1, 0.05)
+  visualFolder.add(simConfig, 'heightScale', 50, 400, 10)
     .name('Height Scale')
     .onChange(() => simulation.updateConfig(simConfig));
 
@@ -89,9 +100,17 @@ export function createControls(simulation: Simulation): Controls {
     .name('Agent Scale')
     .onChange(() => simulation.updateConfig(simConfig));
 
+  // 카메라 폴더
+  const cameraFolder = gui.addFolder('Camera');
+
+  cameraFolder.add({ resetCamera: () => simulation.getCamera().resetToDefault() }, 'resetCamera')
+    .name('Reset Camera (Home)');
+
   // 일부 폴더 닫기
   envFolder.close();
   stabFolder.close();
+  dynamicsFolder.close();
+  cameraFolder.close();
 
   function destroy(): void {
     gui.destroy();

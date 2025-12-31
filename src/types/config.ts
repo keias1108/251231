@@ -19,6 +19,8 @@ export interface SimulationConfig {
   // 안정화 파라미터
   saturationK: number;        // Michaelis-Menten K값
   densityPenalty: number;     // 밀도 페널티 계수
+  uptakeScale: number;        // 섭취 스케일(에너지 단위)
+  energyCostScale: number;    // 에너지 소비 스케일
 
   // 시각화 설정
   heightScale: number;        // 높이맵 스케일
@@ -39,16 +41,18 @@ export interface RenderConfig {
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   gridSize: 1024,
-  initialAgentCount: 1000,
-  maxAgentCount: 5000,
-  resourceGeneration: 0.1,
-  diffusionRate: 0.1,
-  decayRate: 0.02,
-  pheromoneDecay: 0.05,
-  saturationK: 1.0,
-  densityPenalty: 0.1,
-  heightScale: 50.0,  // 높이맵이 잘 보이도록 (그리드 대비 약 5%)
-  agentScale: 1.0,
+  initialAgentCount: 500,      // 적당한 시작 수 (감소)
+  maxAgentCount: 3000,         // 최대 수 제한
+  resourceGeneration: 0.02,    // 자원 생성률 (패치당)
+  diffusionRate: 0.15,         // 확산 빠르게
+  decayRate: 0.01,             // 소산 느리게 (자원 유지)
+  pheromoneDecay: 0.1,         // 페로몬 빠르게 소산
+  saturationK: 0.5,            // 섭취 포화점 낮춤
+  densityPenalty: 0.2,         // 밀집 페널티 증가
+  uptakeScale: 0.5,            // 섭취량 줄여서(과다 증식/불사 방지)
+  energyCostScale: 8.0,        // 에너지 소비를 현실감 있게
+  heightScale: 200.0,          // 높이맵 스케일
+  agentScale: 1.2,             // 에이전트 약간 크게
   trailLength: 16,
   timeScale: 1.0,
 };

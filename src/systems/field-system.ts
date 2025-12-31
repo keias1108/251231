@@ -6,6 +6,7 @@
 import { createBuffer, createEmptyBuffer, createShaderModule } from '../core/gpu-context';
 import {
   createResourceField,
+  createHeightField,
   createTerrainField,
   createDangerField,
   createEmptyField,
@@ -16,6 +17,7 @@ import fieldShaderCode from '../shaders/fields.wgsl?raw';
 
 export interface FieldBuffers {
   resource: [GPUBuffer, GPUBuffer];  // 더블 버퍼링
+  height: GPUBuffer;
   terrain: GPUBuffer;
   danger: GPUBuffer;
   pheromone: [GPUBuffer, GPUBuffer]; // 더블 버퍼링
@@ -29,12 +31,12 @@ export interface FieldSystem {
   currentBuffer: number; // 0 또는 1
 
   update(encoder: GPUCommandEncoder, deltaTime: number, time: number): void;
-  getResourceBuffer(): GPUBuffer;         // 읽기용 (현재 프레임 데이터)
-  getResourceOutputBuffer(): GPUBuffer;   // 쓰기용 (에이전트가 자원 소비할 때)
+  getResourceBuffer(): GPUBuffer;         // 현재 상태(읽기/렌더용)
+  getHeightBuffer(): GPUBuffer;           // 고도(렌더/샘플링용)
   getTerrainBuffer(): GPUBuffer;
   getDangerBuffer(): GPUBuffer;
-  getPheromoneBuffer(): GPUBuffer;
-  getPheromoneOutputBuffer(): GPUBuffer;  // 쓰기용 (페로몬 방출)
+  getPheromoneBuffer(): GPUBuffer;        // 현재 상태(읽기/렌더용)
+  sampleHeightNormalizedAt(x: number, y: number): number;
 }
 
 export function createFieldSystem(
@@ -45,7 +47,8 @@ export function createFieldSystem(
 
   // 초기 필드 데이터 생성
   const resourceData = createResourceField(gridSize);
-  const terrainData = createTerrainField(gridSize);
+  const heightData = createHeightField(gridSize);
+  const terrainData = createTerrainField(gridSize, heightData);
   const dangerData = createDangerField(gridSize, DEFAULT_FIELD_PARAMS.dangerZones);
   const pheromoneData = createEmptyField(gridSize);
 
@@ -55,8 +58,9 @@ export function createFieldSystem(
       createBuffer(device, resourceData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'resource0'),
       createBuffer(device, resourceData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'resource1'),
     ],
-    terrain: createBuffer(device, terrainData, GPUBufferUsage.STORAGE, 'terrain'),
-    danger: createBuffer(device, dangerData, GPUBufferUsage.STORAGE, 'danger'),
+    height: createBuffer(device, heightData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'height'),
+    terrain: createBuffer(device, terrainData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'terrain'),
+    danger: createBuffer(device, dangerData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'danger'),
     pheromone: [
       createBuffer(device, pheromoneData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'pheromone0'),
       createBuffer(device, pheromoneData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'pheromone1'),
@@ -126,6 +130,38 @@ export function createFieldSystem(
   // 파라미터 데이터
   const paramsData = new Float32Array(8);
 
+  function clampIndex(v: number): number {
+    return Math.max(0, Math.min(gridSize - 1, v | 0));
+  }
+
+  function heightAt(ix: number, iy: number): number {
+    const x = clampIndex(ix);
+    const y = clampIndex(iy);
+    return heightData[y * gridSize + x];
+  }
+
+  function lerp(a: number, b: number, t: number): number {
+    return a + (b - a) * t;
+  }
+
+  function sampleHeightNormalizedAt(x: number, y: number): number {
+    const stride = 4;
+    const sx = Math.floor(x / stride) * stride;
+    const sy = Math.floor(y / stride) * stride;
+
+    const h00 = heightAt(sx, sy);
+    const h10 = heightAt(sx + stride, sy);
+    const h01 = heightAt(sx, sy + stride);
+    const h11 = heightAt(sx + stride, sy + stride);
+
+    const fx = x / stride - Math.floor(x / stride);
+    const fy = y / stride - Math.floor(y / stride);
+
+    const h0 = lerp(h00, h10, fx);
+    const h1 = lerp(h01, h11, fx);
+    return lerp(h0, h1, fy);
+  }
+
   function update(encoder: GPUCommandEncoder, deltaTime: number, time: number): void {
     // 파라미터 업데이트
     paramsData[0] = gridSize;                    // gridSize (as float, but used as u32)
@@ -134,7 +170,7 @@ export function createFieldSystem(
     paramsData[3] = config.pheromoneDecay;       // pheromoneDecay
     paramsData[4] = deltaTime * config.timeScale; // deltaTime
     paramsData[5] = time;                        // time
-    paramsData[6] = 0;                           // padding
+    paramsData[6] = config.resourceGeneration;   // resourceGeneration
     paramsData[7] = 0;                           // padding
 
     // u32로 gridSize 설정
@@ -163,11 +199,11 @@ export function createFieldSystem(
     bindGroups,
     get currentBuffer() { return currentBuffer; },
     update,
-    getResourceBuffer: () => buffers.resource[1 - currentBuffer],
-    getResourceOutputBuffer: () => buffers.resource[currentBuffer],
+    getResourceBuffer: () => buffers.resource[currentBuffer],
+    getHeightBuffer: () => buffers.height,
     getTerrainBuffer: () => buffers.terrain,
     getDangerBuffer: () => buffers.danger,
-    getPheromoneBuffer: () => buffers.pheromone[1 - currentBuffer],
-    getPheromoneOutputBuffer: () => buffers.pheromone[currentBuffer],
+    getPheromoneBuffer: () => buffers.pheromone[currentBuffer],
+    sampleHeightNormalizedAt,
   };
 }

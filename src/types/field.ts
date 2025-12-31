@@ -4,9 +4,10 @@
 
 export enum FieldType {
   RESOURCE = 0,    // F(x) - 자원 필드
-  TERRAIN = 1,     // Z(x) - 지형/저항
-  DANGER = 2,      // R(x) - 위험 필드
-  PHEROMONE = 3,   // P(x) - 신호 필드
+  HEIGHT = 1,      // H(x) - 고도(렌더링용, 느리게/정적으로)
+  TERRAIN = 2,     // Z(x) - 지형/저항
+  DANGER = 3,      // R(x) - 위험 필드
+  PHEROMONE = 4,   // P(x) - 신호 필드
 }
 
 export interface FieldConfig {
@@ -20,6 +21,12 @@ export interface FieldConfig {
 export const FIELD_CONFIGS: Record<FieldType, Omit<FieldConfig, 'size'>> = {
   [FieldType.RESOURCE]: {
     type: FieldType.RESOURCE,
+    initialValue: 0.5,
+    minValue: 0.0,
+    maxValue: 1.0,
+  },
+  [FieldType.HEIGHT]: {
+    type: FieldType.HEIGHT,
     initialValue: 0.5,
     minValue: 0.0,
     maxValue: 1.0,
@@ -106,30 +113,74 @@ export function createResourceField(size: number): Float32Array {
   return data;
 }
 
-export function createTerrainField(size: number): Float32Array {
+export function createHeightField(size: number): Float32Array {
   const data = new Float32Array(size * size);
-  data.fill(1.0); // 기본적으로 모든 곳 이동 가능
 
-  // 일부 장애물 영역 추가
-  const obstacleCount = 5;
-  for (let i = 0; i < obstacleCount; i++) {
-    const cx = Math.random() * size;
-    const cy = Math.random() * size;
-    const radius = 30 + Math.random() * 50;
+  const TAU = Math.PI * 2;
+  const cx = size * 0.5;
+  const cy = size * 0.5;
 
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = x - cx;
-        const dy = y - cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < radius) {
-          const idx = y * size + x;
-          const factor = 1 - (radius - dist) / radius;
-          data[idx] = Math.min(data[idx], 0.3 + 0.7 * factor);
-        }
-      }
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = y * size + x;
+      const nx = x / size;
+      const ny = y / size;
+
+      // 대략적인 fBm 느낌(렌더링용): 부드러운 산맥 + 완만한 기복
+      const base =
+        0.55 +
+        0.18 * Math.sin(nx * TAU * 2.0) * Math.cos(ny * TAU * 2.0) +
+        0.12 * Math.sin((nx + ny) * TAU * 3.0) +
+        0.08 * Math.cos((nx * 4.0 - ny * 3.0) * TAU);
+
+      // 중앙이 조금 높고 외곽이 낮아지는 형태(아이소메트릭에서 보기 좋게)
+      const dx = (x - cx) / size;
+      const dy = (y - cy) / size;
+      const radial = Math.sqrt(dx * dx + dy * dy);
+      const dome = 1.0 - Math.min(1.0, radial * 1.6);
+
+      const height = base * 0.7 + dome * 0.3;
+      data[idx] = Math.max(0, Math.min(1, height));
     }
   }
+
+  return data;
+}
+
+export function createTerrainField(size: number, heightField: Float32Array): Float32Array {
+  const data = new Float32Array(size * size);
+
+  // 업계에서 흔한 방식: 고도(또는 경사) 기반으로 "거칠기/저항"을 만들고,
+  // 약간의 노이즈로 다양성만 추가(의미는 Z(x)=저항 유지).
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = y * size + x;
+
+      const xL = Math.max(0, x - 1);
+      const xR = Math.min(size - 1, x + 1);
+      const yU = Math.max(0, y - 1);
+      const yD = Math.min(size - 1, y + 1);
+
+      const hL = heightField[y * size + xL];
+      const hR = heightField[y * size + xR];
+      const hU = heightField[yU * size + x];
+      const hD = heightField[yD * size + x];
+
+      const slope = Math.abs(hR - hL) + Math.abs(hD - hU); // 0~2 대략
+      const roughness = Math.min(1, slope * 2.2);
+
+      const noise =
+        0.5 +
+        0.25 * Math.sin((x / size) * Math.PI * 10 + (y / size) * Math.PI * 7) +
+        0.25 * Math.cos((x / size) * Math.PI * 6 - (y / size) * Math.PI * 9);
+
+      // 1.0=이동 쉬움, 0.0=이동 불가에 가까움
+      const resistance = 1.0 - roughness * 0.6;
+      const withNoise = resistance * (0.85 + 0.15 * noise);
+      data[idx] = Math.max(0.2, Math.min(1.0, withNoise));
+    }
+  }
+
   return data;
 }
 

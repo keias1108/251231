@@ -49,6 +49,8 @@ struct RenderParams {
 @group(0) @binding(1) var<uniform> params: RenderParams;
 @group(0) @binding(2) var<storage, read> agents: array<Agent>;
 @group(0) @binding(3) var<storage, read> resField: array<f32>;
+@group(0) @binding(4) var<storage, read> terrain: array<f32>;
+@group(0) @binding(5) var<storage, read> heightField: array<f32>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -119,6 +121,34 @@ fn getFieldIndex(x: f32, y: f32) -> u32 {
   return iy * size + ix;
 }
 
+// 단일 셀 높이 계산 (지형 + 자원 보너스)
+fn getCellHeight(idx: u32) -> f32 {
+  return heightField[idx] * params.heightScale;
+}
+
+// 지형과 동일한 bilinear 보간으로 높이 계산
+fn getTerrainHeight(pos: vec2<f32>) -> f32 {
+  let stride = 4.0;
+
+  // stride 정렬된 좌표
+  let sx = floor(pos.x / stride) * stride;
+  let sy = floor(pos.y / stride) * stride;
+
+  // 4개 코너 높이 (지형 + 자원 보너스)
+  let h00 = getCellHeight(getFieldIndex(sx, sy));
+  let h10 = getCellHeight(getFieldIndex(sx + stride, sy));
+  let h01 = getCellHeight(getFieldIndex(sx, sy + stride));
+  let h11 = getCellHeight(getFieldIndex(sx + stride, sy + stride));
+
+  // Bilinear 보간
+  let fx = fract(pos.x / stride);
+  let fy = fract(pos.y / stride);
+
+  let h0 = mix(h00, h10, fx);
+  let h1 = mix(h01, h11, fx);
+  return mix(h0, h1, fy);
+}
+
 @vertex
 fn vertexMain(
   @builtin(vertex_index) vertexIndex: u32,
@@ -148,12 +178,11 @@ fn vertexMain(
 
   let localPos = quadVerts[vertexIndex] * size;
 
-  // 월드 위치 (필드 높이 위)
-  let fIdx = getFieldIndex(agent.pos.x, agent.pos.y);
-  let fieldHeight = resField[fIdx] * params.heightScale;
+  // 월드 위치 (지형 높이 위, bilinear 보간)
+  let terrainHeight = getTerrainHeight(agent.pos);
   let worldPos = vec3(
     agent.pos.x + localPos.x,
-    fieldHeight + size * 0.5,  // 필드 위에 떠있게
+    terrainHeight + size * 0.5,  // 지형 위에 떠있게
     agent.pos.y + localPos.y
   );
 
@@ -168,13 +197,14 @@ fn vertexMain(
       // 기본 색상
     }
     case 1u: {  // INTAKE
-      output.color = mix(output.color, vec3(0.3, 0.9, 0.3), 0.3);  // 초록 틴트
+      let pulse = 0.85 + 0.15 * sin(params.time * 6.0);
+      output.color = mix(output.color, vec3(0.25, 1.0, 0.25), 0.65) * pulse;  // 섭취 강조
     }
     case 2u: {  // EVADE
-      output.color = mix(output.color, vec3(0.9, 0.3, 0.3), 0.5);  // 빨강 틴트
+      output.color = mix(output.color, vec3(1.0, 0.25, 0.25), 0.65);  // 회피 강조
     }
     case 3u: {  // REPRODUCE
-      output.color = mix(output.color, vec3(0.9, 0.7, 0.3), 0.5);  // 노랑 틴트
+      output.color = mix(output.color, vec3(1.0, 0.8, 0.25), 0.6);  // 번식 강조
     }
     default: {}
   }
@@ -247,12 +277,11 @@ fn trailVertexMain(
   let trailPos = agent.pos + trailDir * localPos.x * trailLength;
   let offset = perpendicular * localPos.y * 1.5;
 
-  let fIdx = getFieldIndex(trailPos.x, trailPos.y);
-  let fieldHeight = resField[fIdx] * params.heightScale;
+  let terrainHeight = getTerrainHeight(trailPos);
 
   let worldPos = vec3(
     trailPos.x + offset.x,
-    fieldHeight + 1.0,
+    terrainHeight + 1.0,
     trailPos.y + offset.y
   );
 

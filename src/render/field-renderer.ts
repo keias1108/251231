@@ -67,6 +67,7 @@ export function createFieldRenderer(
       { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       { binding: 5, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+      { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
     ],
   });
 
@@ -85,7 +86,7 @@ export function createFieldRenderer(
     },
     primitive: {
       topology: 'triangle-list',
-      cullMode: 'back',
+      cullMode: 'none',  // 양면 렌더링 (위에서도 보이게)
     },
     depthStencil: {
       format: 'depth24plus',
@@ -122,6 +123,7 @@ export function createFieldRenderer(
     device.queue.writeBuffer(cameraBuffer, 0, cameraData.buffer);
 
     // 파라미터 업데이트
+    paramsData[1] = config.heightScale;
     paramsData[5] = time;
     device.queue.writeBuffer(paramsBuffer, 0, paramsData.buffer);
 
@@ -135,9 +137,10 @@ export function createFieldRenderer(
           { binding: 0, resource: { buffer: cameraBuffer } },
           { binding: 1, resource: { buffer: paramsBuffer } },
           { binding: 2, resource: { buffer: resourceBuffer } },
-          { binding: 3, resource: { buffer: fieldSystem.getTerrainBuffer() } },
-          { binding: 4, resource: { buffer: fieldSystem.getDangerBuffer() } },
-          { binding: 5, resource: { buffer: fieldSystem.getPheromoneBuffer() } },
+          { binding: 3, resource: { buffer: fieldSystem.getHeightBuffer() } },
+          { binding: 4, resource: { buffer: fieldSystem.getTerrainBuffer() } },
+          { binding: 5, resource: { buffer: fieldSystem.getDangerBuffer() } },
+          { binding: 6, resource: { buffer: fieldSystem.getPheromoneBuffer() } },
         ],
       });
       lastResourceBuffer = resourceBuffer;

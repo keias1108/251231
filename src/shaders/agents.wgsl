@@ -42,11 +42,21 @@ struct SimParams {
   gridSize: u32,
   agentCount: u32,
   maxAgents: u32,
+  _pad0: u32,
   deltaTime: f32,
   time: f32,
   saturationK: f32,
   densityPenalty: f32,
-  _padding: f32,
+  uptakeScale: f32,
+  energyCostScale: f32,
+  _pad1: vec2<f32>,
+}
+
+struct Metrics {
+  alive: atomic<u32>,
+  births: atomic<u32>,
+  deaths: atomic<u32>,
+  uptakeMicro: atomic<u32>,
 }
 
 // 모드 상수
@@ -57,12 +67,12 @@ const MODE_REPRODUCE: u32 = 3u;
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var<storage, read_write> agents: array<Agent>;
-@group(0) @binding(2) var<storage, read> resField: array<f32>;
-@group(0) @binding(3) var<storage, read_write> resFieldOut: array<f32>;
-@group(0) @binding(4) var<storage, read> terrain: array<f32>;
-@group(0) @binding(5) var<storage, read> danger: array<f32>;
-@group(0) @binding(6) var<storage, read_write> pheromoneField: array<f32>;
-@group(0) @binding(7) var<storage, read_write> agentCount: atomic<u32>;
+@group(0) @binding(2) var<storage, read_write> resField: array<f32>;
+@group(0) @binding(3) var<storage, read> terrain: array<f32>;
+@group(0) @binding(4) var<storage, read> danger: array<f32>;
+@group(0) @binding(5) var<storage, read_write> pheromoneField: array<f32>;
+@group(0) @binding(6) var<storage, read_write> agentCount: atomic<u32>;
+@group(0) @binding(7) var<storage, read_write> metrics: Metrics;
 
 fn fieldIdx(x: f32, y: f32) -> u32 {
   let size = f32(params.gridSize);
@@ -108,13 +118,15 @@ fn randomDir(seed: u32) -> vec2<f32> {
   return vec2(cos(angle), sin(angle));
 }
 
-// 센싱: 주변 환경 탐색
+// 센싱: 주변 환경 탐색 (가중 평균 방향)
 fn sense(agent: Agent, agentIdx: u32) -> vec4<f32> {
-  // 반환: (최적 방향 x, 최적 방향 y, 최대 자원, 위험도)
+  // 반환: (가중 방향 x, 가중 방향 y, 최대 자원, 위험도+밀도)
   let sampleCount = 8u;
-  var bestDir = vec2(0.0);
+  var weightedDir = vec2(0.0);
+  var totalWeight = 0.0;
   var maxRes = 0.0;
   var totalDanger = 0.0;
+  var totalPheromone = 0.0;
 
   for (var i = 0u; i < sampleCount; i++) {
     let angle = f32(i) * 0.785398;  // 45도 간격
@@ -124,18 +136,35 @@ fn sense(agent: Agent, agentIdx: u32) -> vec4<f32> {
     let r = sampleRes(samplePos);
     let d = sampleDanger(samplePos);
     let t = sampleTerrain(samplePos);
+    let p = samplePheromone(samplePos);
 
-    // 자원 가중 방향 (지형과 위험 고려)
-    let weight = r * t * (1.0 - d * agent.evasion);
-    if (weight > maxRes) {
-      maxRes = weight;
-      bestDir = dir;
+    // 자원 가중치 (지형과 위험 고려)
+    var weight = r * t * (1.0 - d * agent.evasion);
+
+    // 페로몬 영향: sociality 높으면 끌림, 낮으면 회피 (분산)
+    let pheromoneInfluence = (agent.sociality - 0.5) * 2.0;  // -1 ~ +1
+    weight *= (1.0 + p * pheromoneInfluence * 0.5);
+
+    // 가중 평균 방향 (winner-takes-all이 아닌 부드러운 방향)
+    weightedDir += dir * weight;
+    totalWeight += weight;
+
+    if (r > maxRes) {
+      maxRes = r;
     }
-
     totalDanger += d;
+    totalPheromone += p;
   }
 
-  return vec4(bestDir.x, bestDir.y, maxRes, totalDanger / f32(sampleCount));
+  // 정규화
+  if (totalWeight > 0.001) {
+    weightedDir = weightedDir / totalWeight;
+  }
+
+  // 밀도 정보 포함 (위험 + 페로몬 밀도)
+  let crowding = totalDanger / f32(sampleCount) + totalPheromone / f32(sampleCount) * 0.5;
+
+  return vec4(weightedDir.x, weightedDir.y, maxRes, crowding);
 }
 
 @compute @workgroup_size(64)
@@ -156,20 +185,21 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // === 1. 센싱 ===
   let senseResult = sense(agent, idx);
-  let bestDir = vec2(senseResult.x, senseResult.y);
+  let sensedDir = vec2(senseResult.x, senseResult.y);
   let nearbyResource = senseResult.z;
-  let dangerLevel = senseResult.w;
+  let crowding = senseResult.w;  // 위험 + 밀도
 
   // 현재 위치의 필드 값
   let currentRes = sampleRes(agent.pos);
   let currentTerrain = sampleTerrain(agent.pos);
   let currentDanger = sampleDanger(agent.pos);
+  let currentPheromone = samplePheromone(agent.pos);
 
   // === 2. 모드 결정 ===
   var newMode = agent.mode;
 
   // 위험 회피 우선
-  if (dangerLevel > 0.5 || currentDanger > 0.3) {
+  if (currentDanger > 0.3) {
     newMode = MODE_EVADE;
   }
   // 번식 조건
@@ -177,7 +207,7 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
     newMode = MODE_REPRODUCE;
   }
   // 자원이 충분하면 섭취
-  else if (currentRes > 0.2) {
+  else if (currentRes > 0.15) {
     newMode = MODE_INTAKE;
   }
   // 그 외 탐색
@@ -190,24 +220,40 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   // === 3. 행동 실행 ===
   var targetVel = vec2(0.0);
 
+  // 유전적 다양성 기반 랜덤성 (activity가 높을수록 더 탐험적)
+  let explorationFactor = 0.5 + agent.activity * 0.3;
+  let randomVec = randomDir(seed) * explorationFactor;
+
   switch (newMode) {
     case MODE_EXPLORE: {
-      // 탐색: 최적 방향 + 랜덤성
-      let randomness = randomDir(seed) * 0.3;
-      targetVel = normalize(bestDir + randomness) * agent.activity;
+      // 탐색: 감지 방향 + 강한 랜덤성 + 밀도 회피
+      var exploreDir = sensedDir + randomVec;
+
+      // 밀도가 높으면 반대로 이동 (분산 유도)
+      if (crowding > 0.3 && agent.sociality < 0.5) {
+        exploreDir = -sensedDir * 0.5 + randomVec * 1.5;
+      }
+
+      // 자원이 적으면 완전 랜덤 탐색
+      if (nearbyResource < 0.1) {
+        exploreDir = randomVec * 2.0 + agent.vel * 0.3;  // 관성 유지
+      }
+
+      targetVel = normalize(exploreDir + vec2(0.001)) * agent.activity;
     }
     case MODE_INTAKE: {
-      // 섭취: 느리게 움직이며 자원 흡수
-      targetVel = agent.vel * 0.5;
+      // 섭취: 느리게 움직이며 자원 흡수, 약간의 이동
+      let driftDir = randomDir(seed + 1u) * 0.2;
+      targetVel = driftDir * agent.activity * 0.3;
     }
     case MODE_EVADE: {
-      // 회피: 위험 반대 방향으로 빠르게
-      let escapeDir = -normalize(bestDir + vec2(0.001));
-      targetVel = escapeDir * agent.activity * 1.5;
+      // 회피: 센싱 결과(안전/자원 가중)를 따라 빠르게 이동 + 랜덤
+      let escapeDir = normalize(sensedDir + vec2(0.001));
+      targetVel = (escapeDir + randomVec * 0.3) * agent.activity * 1.8;
     }
     case MODE_REPRODUCE: {
-      // 번식: 움직임 정지
-      targetVel = vec2(0.0);
+      // 번식: 거의 정지
+      targetVel = randomDir(seed + 2u) * 0.1;
     }
     default: {
       targetVel = randomDir(seed) * agent.activity;
@@ -221,36 +267,38 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   let speed = length(agent.vel) * currentTerrain;
 
   // 위치 업데이트
-  agent.pos += agent.vel * dt * 20.0;
+  agent.pos += agent.vel * (currentTerrain * dt * 20.0);
 
-  // 경계 래핑
-  let size = f32(params.gridSize);
-  agent.pos.x = ((agent.pos.x % size) + size) % size;
-  agent.pos.y = ((agent.pos.y % size) + size) % size;
+  // 경계 클램핑 (센싱과 동일하게)
+  let size = f32(params.gridSize) - 1.0;
+  agent.pos.x = clamp(agent.pos.x, 0.0, size);
+  agent.pos.y = clamp(agent.pos.y, 0.0, size);
 
   // === 4. 자원 상호작용 ===
   if (newMode == MODE_INTAKE) {
     // 섭취
-    let uptakeAmount = uptake(currentRes, agent.absorption) * agent.efficiency * dt;
+    let uptakeAmount = uptake(currentRes, agent.absorption) * agent.efficiency * params.uptakeScale * dt;
     agent.energy += uptakeAmount;
 
-    // 자원 감소 (atomic operation 시뮬레이션)
+    // 자원 감소 (경쟁/경합은 단순화)
     let fieldI = fieldIdx(agent.pos.x, agent.pos.y);
-    resFieldOut[fieldI] = max(0.0, resField[fieldI] - uptakeAmount);
+    resField[fieldI] = max(0.0, resField[fieldI] - uptakeAmount);
+
+    atomicAdd(&metrics.uptakeMicro, u32(uptakeAmount * 1000000.0));
   }
 
-  // 페로몬 방출 (이동 중)
+  // 페로몬 방출 (이동 중) - 포화 방지를 위해 방출량 감소
   if (speed > 0.1) {
     let fieldI = fieldIdx(agent.pos.x, agent.pos.y);
-    pheromoneField[fieldI] = min(1.0, pheromoneField[fieldI] + 0.01 * dt);
+    pheromoneField[fieldI] = min(1.0, pheromoneField[fieldI] + 0.001 * dt);
   }
 
   // === 5. 에너지 소비 ===
   // 기초 대사
-  var energyCost = agent.metabolism * dt;
+  var energyCost = agent.metabolism * dt * params.energyCostScale;
 
   // 이동 비용
-  energyCost += agent.moveCost * speed * dt;
+  energyCost += agent.moveCost * speed * dt * params.energyCostScale;
 
   // 밀도 페널티 (페로몬으로 간접 측정)
   let localPheromone = samplePheromone(agent.pos);
@@ -260,7 +308,7 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   agent.stress = mix(agent.stress, currentDanger, 0.1);
   energyCost += agent.stress * 0.02 * dt;
 
-  agent.energy -= energyCost;
+  agent.energy = max(0.0, agent.energy - energyCost);  // 음수 방지
   agent.cooldown = max(0.0, agent.cooldown - dt);
   agent.age += dt;
 
@@ -268,6 +316,8 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   if (agent.energy <= 0.0) {
     // 사망
     agent.alive = 0u;
+    atomicAdd(&metrics.deaths, 1u);
+    atomicSub(&metrics.alive, 1u);
   } else if (newMode == MODE_REPRODUCE && agent.cooldown <= 0.0) {
     // 번식 시도 (실제 번식은 별도 커널에서 처리)
     agent.energy *= 0.5;  // 에너지 분할
@@ -309,7 +359,7 @@ fn processReproduction(@builtin(global_invocation_id) id: vec3<u32>) {
   child.vel = randomDir(seed + 1u) * 0.5;
 
   // 상태 초기화
-  child.energy = parent.energy * 0.4;  // 부모 에너지의 일부
+  child.energy = parent.energy * 0.8;  // 부모 에너지의 80% (에너지 보존: 부모50% + 자식40% = 90%)
   child.mode = MODE_EXPLORE;
   child.stress = 0.0;
   child.cooldown = parent.reproCooldown;
@@ -349,4 +399,6 @@ fn processReproduction(@builtin(global_invocation_id) id: vec3<u32>) {
   child._padding = 0u;
 
   agents[newIdx] = child;
+  atomicAdd(&metrics.births, 1u);
+  atomicAdd(&metrics.alive, 1u);
 }

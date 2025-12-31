@@ -10,8 +10,8 @@ struct FieldParams {
   pheromoneDecay: f32,
   deltaTime: f32,
   time: f32,
-  _padding1: f32,
-  _padding2: f32,
+  resourceGenRate: f32,  // 자원 생성률 (config에서 전달)
+  _padding: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: FieldParams;
@@ -69,11 +69,15 @@ fn resourceGeneration(x: i32, y: i32, time: f32) -> f32 {
     let dy = fy - cy;
     let dist = sqrt(dx * dx + dy * dy);
 
-    let radius = 50.0 + sin(fi * 2.0) * 20.0;
+    let radius = 80.0 + sin(fi * 2.0) * 30.0;  // 패치 크기 증가
     if (dist < radius) {
-      spawn += 0.001 * (1.0 - dist / radius);
+      // config에서 전달된 생성률 사용
+      spawn += params.resourceGenRate * (1.0 - dist / radius);
     }
   }
+
+  // 전역 기본 생성 (어디서든 약간의 자원 생성)
+  spawn += params.resourceGenRate * 0.1;
 
   return spawn;
 }
