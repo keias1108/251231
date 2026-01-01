@@ -12,9 +12,13 @@ export interface SimulationConfig {
 
   // 환경 파라미터
   resourceGeneration: number; // 자원 생성률
+  resourcePatchDriftSpeed: number; // 자원 패치 이동 속도 (0이면 고정)
   diffusionRate: number; // 확산 계수
   decayRate: number; // 소산 계수
   pheromoneDecay: number; // 페로몬 감쇠율
+  dangerDecay: number; // 위험(오염) 감쇠율
+  dangerDiffusionScale: number; // 위험(오염) 확산 배율
+  dangerFromConsumption: number; // 섭취->위험(오염) 변환 계수
 
   // 안정화 파라미터
   saturationK: number; // Michaelis-Menten K값
@@ -37,6 +41,7 @@ export interface RenderConfig {
   showDanger: boolean;
   showPheromone: boolean;
   showTrails: boolean;
+  showAgents: boolean;
   showDensityHeatmap: boolean;
 }
 
@@ -45,9 +50,13 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   initialAgentCount: 500, // 적당한 시작 수 (감소)
   maxAgentCount: 600000, // 기본 capacity
   resourceGeneration: 0.02, // 자원 생성률 (패치당)
+  resourcePatchDriftSpeed: 0.01, // 패치 이동 (0이면 고정)
   diffusionRate: 0.15, // 확산 빠르게
   decayRate: 0.01, // 소산 느리게 (자원 유지)
   pheromoneDecay: 0.1, // 페로몬 빠르게 소산
+  dangerDecay: 0.05, // 위험(오염) 감쇠 (중간)
+  dangerDiffusionScale: 1.0, // 위험 확산 기본
+  dangerFromConsumption: 0.7, // 섭취량의 일부가 위험(오염)으로 전환
   saturationK: 0.5, // 섭취 포화점 낮춤
   densityPenalty: 0.2, // 밀집 페널티 증가
   uptakeScale: 0.5, // 섭취량 줄여서(과다 증식/불사 방지)
@@ -64,5 +73,6 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   showDanger: true,
   showPheromone: true,
   showTrails: true,
+  showAgents: true,
   showDensityHeatmap: false,
 };

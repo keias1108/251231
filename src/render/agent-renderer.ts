@@ -147,11 +147,13 @@ export function createAgentRenderer(
   });
 
   let showTrails = true;
+  let showAgents = true;
   let currentBindGroup: GPUBindGroup | null = null;
   let lastAgentBuffer: GPUBuffer | null = null;
 
   function updateConfig(renderConfig: RenderConfig): void {
     showTrails = renderConfig.showTrails;
+    showAgents = renderConfig.showAgents;
     paramsData[4] = showTrails ? 1.0 : 0.0;
   }
 
@@ -217,9 +219,11 @@ export function createAgentRenderer(
     }
 
     // 에이전트 렌더링
-    pass.setPipeline(agentPipeline);
-    pass.setBindGroup(0, currentBindGroup!);
-    pass.draw(6, agentCount);  // 6 vertices per agent quad
+    if (showAgents) {
+      pass.setPipeline(agentPipeline);
+      pass.setBindGroup(0, currentBindGroup!);
+      pass.draw(6, agentCount);  // 6 vertices per agent quad
+    }
 
     pass.end();
   }

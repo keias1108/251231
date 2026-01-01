@@ -11,16 +11,27 @@ struct FieldParams {
   deltaTime: f32,
   time: f32,
   resourceGenRate: f32,  // 자원 생성률 (config에서 전달)
-  _padding: f32,
+  dangerDecay: f32,      // 위험(오염) 감쇠
+  dangerDiffusionScale: f32,
+  dangerFromConsumption: f32,
+  resourcePatchDriftSpeed: f32,
+  _padding0: f32,
+  _padding1: f32,
+  _padding2: f32,
+  _padding3: f32,
+  _padding4: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: FieldParams;
 @group(0) @binding(1) var<storage, read> resIn: array<f32>;
 @group(0) @binding(2) var<storage, read_write> resOut: array<f32>;
 @group(0) @binding(3) var<storage, read> terrain: array<f32>;
-@group(0) @binding(4) var<storage, read> danger: array<f32>;
-@group(0) @binding(5) var<storage, read> pheromoneIn: array<f32>;
-@group(0) @binding(6) var<storage, read_write> pheromoneOut: array<f32>;
+@group(0) @binding(4) var<storage, read> dangerIn: array<f32>;
+@group(0) @binding(5) var<storage, read_write> dangerOut: array<f32>;
+@group(0) @binding(6) var<storage, read> pheromoneIn: array<f32>;
+@group(0) @binding(7) var<storage, read_write> pheromoneOut: array<f32>;
+@group(0) @binding(8) var<storage, read_write> resConsumeMicro: array<atomic<u32>>;
+@group(0) @binding(9) var<storage, read_write> pheromoneDepositMicro: array<atomic<u32>>;
 
 fn idx(x: i32, y: i32) -> u32 {
   let size = i32(params.gridSize);
@@ -47,6 +58,15 @@ fn laplacianPher(x: i32, y: i32) -> f32 {
   return l + r + u + d - 4.0 * c;
 }
 
+fn laplacianDanger(x: i32, y: i32) -> f32 {
+  let c = dangerIn[idx(x, y)];
+  let l = dangerIn[idx(x - 1, y)];
+  let r = dangerIn[idx(x + 1, y)];
+  let u = dangerIn[idx(x, y - 1)];
+  let d = dangerIn[idx(x, y + 1)];
+  return l + r + u + d - 4.0 * c;
+}
+
 // 자원 생성 패턴 (여러 패치)
 fn resourceGeneration(x: i32, y: i32, time: f32) -> f32 {
   let fx = f32(x);
@@ -59,7 +79,7 @@ fn resourceGeneration(x: i32, y: i32, time: f32) -> f32 {
   let patchCount = 8;
   for (var i = 0; i < patchCount; i++) {
     let fi = f32(i);
-    let angle = fi * 0.785398 + time * 0.01;  // 각 패치마다 다른 각도
+    let angle = fi * 0.785398 + time * params.resourcePatchDriftSpeed;  // 0이면 고정
 
     // 패치 중심
     let cx = size * 0.5 + cos(angle + fi) * size * 0.3;
@@ -95,6 +115,12 @@ fn updateFields(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = idx(x, y);
   let dt = params.deltaTime;
 
+  // 이 셀에서 발생한 에이전트 이벤트(섭취/방출)를 한 번에 소비 (다음 스텝 누적분으로 초기화)
+  let consumedMicro = atomicExchange(&resConsumeMicro[i], 0u);
+  let consumed = f32(consumedMicro) / 1000000.0;
+  let depositMicro = atomicExchange(&pheromoneDepositMicro[i], 0u);
+  let deposit = f32(depositMicro) / 1000000.0;
+
   // 지형 저항 계수
   let terrainFactor = terrain[i];
 
@@ -111,6 +137,9 @@ fn updateFields(@builtin(global_invocation_id) id: vec3<u32>) {
   // 생성
   res += resourceGeneration(x, y, params.time) * dt;
 
+  // 에이전트 섭취 반영
+  res = max(0.0, res - consumed);
+
   // 클램프
   resOut[i] = clamp(res, 0.0, 1.0);
 
@@ -124,8 +153,26 @@ fn updateFields(@builtin(global_invocation_id) id: vec3<u32>) {
   // 감쇠 (페로몬은 더 빠르게 사라짐)
   pher *= (1.0 - params.pheromoneDecay * dt);
 
+  // 에이전트 방출 반영
+  pher += deposit;
+
   // 클램프
   pheromoneOut[i] = clamp(pher, 0.0, 1.0);
+
+  // === 위험(오염) 필드 업데이트 ===
+  var tox = dangerIn[i];
+
+  // 확산 (지형에 약하게 얽히게)
+  let toxDiff = laplacianDanger(x, y) * params.diffusionCoeff * params.dangerDiffusionScale;
+  tox += toxDiff * dt;
+
+  // 감쇠
+  tox *= (1.0 - params.dangerDecay * dt);
+
+  // 생성: 섭취 활동이 오염을 만든다 (폐기물/독성)
+  tox += consumed * params.dangerFromConsumption;
+
+  dangerOut[i] = clamp(tox, 0.0, 1.0);
 }
 
 // 필드 스왑용 복사 커널

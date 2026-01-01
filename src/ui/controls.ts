@@ -228,6 +228,10 @@ export function createControls(simulation: Simulation): Controls {
       .name(t('gui.resourceGen'))
       .onChange(() => simulation.updateConfig(simConfig));
 
+    envFolder.add(simConfig, 'resourcePatchDriftSpeed', 0, 0.05, 0.001)
+      .name(t('gui.resourcePatchDrift'))
+      .onChange(() => simulation.updateConfig(simConfig));
+
     envFolder.add(simConfig, 'diffusionRate', 0, 0.5, 0.002)
       .name(t('gui.diffusion'))
       .onChange(() => simulation.updateConfig(simConfig));
@@ -238,6 +242,18 @@ export function createControls(simulation: Simulation): Controls {
 
     envFolder.add(simConfig, 'pheromoneDecay', 0, 0.2, 0.002)
       .name(t('gui.pheromoneDecay'))
+      .onChange(() => simulation.updateConfig(simConfig));
+
+    envFolder.add(simConfig, 'dangerFromConsumption', 0, 2.0, 0.02)
+      .name(t('gui.dangerFromConsumption'))
+      .onChange(() => simulation.updateConfig(simConfig));
+
+    envFolder.add(simConfig, 'dangerDiffusionScale', 0, 3.0, 0.02)
+      .name(t('gui.dangerDiffusionScale'))
+      .onChange(() => simulation.updateConfig(simConfig));
+
+    envFolder.add(simConfig, 'dangerDecay', 0, 0.5, 0.005)
+      .name(t('gui.dangerDecay'))
       .onChange(() => simulation.updateConfig(simConfig));
 
     // 안정화 폴더
@@ -282,6 +298,10 @@ export function createControls(simulation: Simulation): Controls {
 
     visualFolder.add(renderConfigState, 'showTrails')
       .name(t('gui.showTrails'))
+      .onChange(() => simulation.updateRenderConfig(renderConfigState));
+
+    visualFolder.add(renderConfigState, 'showAgents')
+      .name(t('gui.showAgents'))
       .onChange(() => simulation.updateRenderConfig(renderConfigState));
 
     visualFolder.add(simConfig, 'heightScale', 50, 400, 2)

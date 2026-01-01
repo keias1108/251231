@@ -142,7 +142,9 @@ fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
   if (params.showPheromone > 0.5) {
     let p = pheromoneField[idx];
     let pherColor = vec3(0.2, 0.6, 0.9);
-    color = mix(color, pherColor, p * 0.5);
+    // 낮은 값도 보이도록 비선형 증폭(시각화 전용)
+    let vis = 1.0 - exp(-8.0 * p);
+    color = mix(color, pherColor, vis * 0.75);
   }
 
   // 간단한 조명

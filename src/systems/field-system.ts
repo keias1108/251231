@@ -19,8 +19,10 @@ export interface FieldBuffers {
   resource: [GPUBuffer, GPUBuffer];  // 더블 버퍼링
   height: GPUBuffer;
   terrain: GPUBuffer;
-  danger: GPUBuffer;
+  danger: [GPUBuffer, GPUBuffer];    // 더블 버퍼링 (동적 위험/오염)
   pheromone: [GPUBuffer, GPUBuffer]; // 더블 버퍼링
+  resourceConsumeMicro: GPUBuffer;   // 에이전트가 섭취한 양 누적 (u32, micro 단위)
+  pheromoneDepositMicro: GPUBuffer;  // 에이전트가 방출한 페로몬 누적 (u32, micro 단위)
   params: GPUBuffer;
 }
 
@@ -36,6 +38,8 @@ export interface FieldSystem {
   getTerrainBuffer(): GPUBuffer;
   getDangerBuffer(): GPUBuffer;
   getPheromoneBuffer(): GPUBuffer;        // 현재 상태(읽기/렌더용)
+  getResourceConsumeMicroBuffer(): GPUBuffer;
+  getPheromoneDepositMicroBuffer(): GPUBuffer;
   sampleHeightNormalizedAt(x: number, y: number): number;
   reset(): void;
 }
@@ -61,12 +65,27 @@ export function createFieldSystem(
     ],
     height: createBuffer(device, heightData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'height'),
     terrain: createBuffer(device, terrainData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'terrain'),
-    danger: createBuffer(device, dangerData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'danger'),
+    danger: [
+      createBuffer(device, dangerData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'danger0'),
+      createBuffer(device, dangerData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'danger1'),
+    ],
     pheromone: [
       createBuffer(device, pheromoneData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'pheromone0'),
       createBuffer(device, pheromoneData, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'pheromone1'),
     ],
-    params: createEmptyBuffer(device, 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'fieldParams'),
+    resourceConsumeMicro: createEmptyBuffer(
+      device,
+      gridSize * gridSize * 4,
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      'resourceConsumeMicro'
+    ),
+    pheromoneDepositMicro: createEmptyBuffer(
+      device,
+      gridSize * gridSize * 4,
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      'pheromoneDepositMicro'
+    ),
+    params: createEmptyBuffer(device, 64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'fieldParams'),
   };
 
   // 셰이더 모듈
@@ -80,9 +99,12 @@ export function createFieldSystem(
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // dangerIn
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // dangerOut
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // pheromoneIn
+      { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // pheromoneOut
+      { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // consume
+      { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // deposit
     ],
   });
 
@@ -106,9 +128,12 @@ export function createFieldSystem(
         { binding: 1, resource: { buffer: buffers.resource[0] } },
         { binding: 2, resource: { buffer: buffers.resource[1] } },
         { binding: 3, resource: { buffer: buffers.terrain } },
-        { binding: 4, resource: { buffer: buffers.danger } },
-        { binding: 5, resource: { buffer: buffers.pheromone[0] } },
-        { binding: 6, resource: { buffer: buffers.pheromone[1] } },
+        { binding: 4, resource: { buffer: buffers.danger[0] } },
+        { binding: 5, resource: { buffer: buffers.danger[1] } },
+        { binding: 6, resource: { buffer: buffers.pheromone[0] } },
+        { binding: 7, resource: { buffer: buffers.pheromone[1] } },
+        { binding: 8, resource: { buffer: buffers.resourceConsumeMicro } },
+        { binding: 9, resource: { buffer: buffers.pheromoneDepositMicro } },
       ],
     }),
     device.createBindGroup({
@@ -119,9 +144,12 @@ export function createFieldSystem(
         { binding: 1, resource: { buffer: buffers.resource[1] } },
         { binding: 2, resource: { buffer: buffers.resource[0] } },
         { binding: 3, resource: { buffer: buffers.terrain } },
-        { binding: 4, resource: { buffer: buffers.danger } },
-        { binding: 5, resource: { buffer: buffers.pheromone[1] } },
-        { binding: 6, resource: { buffer: buffers.pheromone[0] } },
+        { binding: 4, resource: { buffer: buffers.danger[1] } },
+        { binding: 5, resource: { buffer: buffers.danger[0] } },
+        { binding: 6, resource: { buffer: buffers.pheromone[1] } },
+        { binding: 7, resource: { buffer: buffers.pheromone[0] } },
+        { binding: 8, resource: { buffer: buffers.resourceConsumeMicro } },
+        { binding: 9, resource: { buffer: buffers.pheromoneDepositMicro } },
       ],
     }),
   ];
@@ -129,7 +157,7 @@ export function createFieldSystem(
   let currentBuffer = 0;
 
   // 파라미터 데이터
-  const paramsData = new Float32Array(8);
+  const paramsData = new Float32Array(16);
 
   function clampIndex(v: number): number {
     return Math.max(0, Math.min(gridSize - 1, v | 0));
@@ -172,7 +200,15 @@ export function createFieldSystem(
     paramsData[4] = deltaTime * config.timeScale; // deltaTime
     paramsData[5] = time;                        // time
     paramsData[6] = config.resourceGeneration;   // resourceGeneration
-    paramsData[7] = 0;                           // padding
+    paramsData[7] = config.dangerDecay;          // dangerDecay
+    paramsData[8] = config.dangerDiffusionScale; // dangerDiffusionScale
+    paramsData[9] = config.dangerFromConsumption; // dangerFromConsumption
+    paramsData[10] = config.resourcePatchDriftSpeed; // resourcePatchDriftSpeed
+    paramsData[11] = 0;                          // padding
+    paramsData[12] = 0;                          // padding
+    paramsData[13] = 0;                          // padding
+    paramsData[14] = 0;                          // padding
+    paramsData[15] = 0;                          // padding
 
     // u32로 gridSize 설정
     const paramsView = new DataView(paramsData.buffer);
@@ -205,6 +241,14 @@ export function createFieldSystem(
     device.queue.writeBuffer(buffers.pheromone[0], 0, newPheromoneData.buffer);
     device.queue.writeBuffer(buffers.pheromone[1], 0, newPheromoneData.buffer);
 
+    // 위험(오염) 필드 리셋 (기본 위험 지형으로)
+    device.queue.writeBuffer(buffers.danger[0], 0, dangerData.buffer);
+    device.queue.writeBuffer(buffers.danger[1], 0, dangerData.buffer);
+
+    // 누적 버퍼 리셋
+    device.queue.writeBuffer(buffers.resourceConsumeMicro, 0, new Uint32Array(gridSize * gridSize));
+    device.queue.writeBuffer(buffers.pheromoneDepositMicro, 0, new Uint32Array(gridSize * gridSize));
+
     // 버퍼 인덱스 리셋
     currentBuffer = 0;
   }
@@ -218,8 +262,10 @@ export function createFieldSystem(
     getResourceBuffer: () => buffers.resource[currentBuffer],
     getHeightBuffer: () => buffers.height,
     getTerrainBuffer: () => buffers.terrain,
-    getDangerBuffer: () => buffers.danger,
+    getDangerBuffer: () => buffers.danger[currentBuffer],
     getPheromoneBuffer: () => buffers.pheromone[currentBuffer],
+    getResourceConsumeMicroBuffer: () => buffers.resourceConsumeMicro,
+    getPheromoneDepositMicroBuffer: () => buffers.pheromoneDepositMicro,
     sampleHeightNormalizedAt,
     reset,
   };

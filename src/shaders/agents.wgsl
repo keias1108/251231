@@ -73,13 +73,15 @@ const MODE_REPRODUCE: u32 = 3u;
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var<storage, read_write> agents: array<Agent>;
-@group(0) @binding(2) var<storage, read_write> resField: array<f32>;
+@group(0) @binding(2) var<storage, read> resField: array<f32>;
 @group(0) @binding(3) var<storage, read> terrain: array<f32>;
 @group(0) @binding(4) var<storage, read> danger: array<f32>;
-@group(0) @binding(5) var<storage, read_write> pheromoneField: array<f32>;
+@group(0) @binding(5) var<storage, read> pheromoneField: array<f32>;
 @group(0) @binding(6) var<storage, read_write> agentCount: atomic<u32>;
 @group(0) @binding(7) var<storage, read_write> metrics: Metrics;
 @group(0) @binding(8) var<storage, read_write> freeList: FreeList;
+@group(0) @binding(9) var<storage, read_write> resConsumeMicro: array<atomic<u32>>;
+@group(0) @binding(10) var<storage, read_write> pheromoneDepositMicro: array<atomic<u32>>;
 
 fn freeListPush(index: u32) {
   let slot = atomicAdd(&freeList.count, 1u);
@@ -228,21 +230,27 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   // === 2. 모드 결정 ===
   var newMode = agent.mode;
 
-  // 위험 회피 우선
-  if (currentDanger > 0.3) {
-    newMode = MODE_EVADE;
-  }
-  // 번식 조건
-  else if (agent.energy >= agent.reproThreshold && agent.cooldown <= 0.0) {
+  // 업계에서 흔한 패턴: 위험(오염)은 "벽"이 아니라 비용/효율로 모델링.
+  // => 하드 스위치(위험이면 무조건 회피) 대신, 극단적인 경우만 패닉(EVADE)로 처리.
+  let panic = currentDanger > 0.9;
+
+  // 번식은 안전한 곳에서만 선호
+  if (!panic && agent.energy >= agent.reproThreshold && agent.cooldown <= 0.0 && currentDanger < 0.6) {
     newMode = MODE_REPRODUCE;
-  }
-  // 자원이 충분하면 섭취
-  else if (currentRes > 0.15) {
-    newMode = MODE_INTAKE;
-  }
-  // 그 외 탐색
-  else {
-    newMode = MODE_EXPLORE;
+  } else {
+    // 섭취는 "순이익"이 있을 때만 선택: 오염이 높으면 섭취 효율이 깎여서 손해일 수 있음
+    let baseUptake = uptake(currentRes, agent.absorption) * agent.efficiency * params.uptakeScale;
+    let uptakePenalty = clamp(1.0 - currentDanger * 0.9, 0.0, 1.0);
+    let expectedGain = baseUptake * uptakePenalty;
+
+    // 위험이 극단적으로 높으면 우선 이탈
+    if (panic) {
+      newMode = MODE_EVADE;
+    } else if (currentRes > 0.12 && expectedGain > 0.01) {
+      newMode = MODE_INTAKE;
+    } else {
+      newMode = MODE_EXPLORE;
+    }
   }
 
   agent.mode = newMode;
@@ -307,12 +315,13 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   // === 4. 자원 상호작용 ===
   if (newMode == MODE_INTAKE) {
     // 섭취
-    let uptakeAmount = uptake(currentRes, agent.absorption) * agent.efficiency * params.uptakeScale * dt;
+    // 오염이 높을수록 "오염된 먹이"처럼 순이익이 줄어듦 (C: 보상↓ + 비용↑)
+    let uptakePenalty = clamp(1.0 - currentDanger * 0.9, 0.0, 1.0);
+    let uptakeAmount = uptake(currentRes, agent.absorption) * agent.efficiency * params.uptakeScale * uptakePenalty * dt;
     agent.energy += uptakeAmount;
 
-    // 자원 감소 (경쟁/경합은 단순화)
     let fieldI = fieldIdx(agent.pos.x, agent.pos.y);
-    resField[fieldI] = max(0.0, resField[fieldI] - uptakeAmount);
+    atomicAdd(&resConsumeMicro[fieldI], u32(uptakeAmount * 1000000.0));
 
     atomicAdd(&metrics.uptakeMicro, u32(uptakeAmount * 1000000.0));
   }
@@ -320,7 +329,7 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   // 페로몬 방출 (이동 중) - 포화 방지를 위해 방출량 감소
   if (speed > 0.1) {
     let fieldI = fieldIdx(agent.pos.x, agent.pos.y);
-    pheromoneField[fieldI] = min(1.0, pheromoneField[fieldI] + 0.001 * dt);
+    atomicAdd(&pheromoneDepositMicro[fieldI], u32(0.03 * dt * 1000000.0));
   }
 
   // === 5. 에너지 소비 ===
@@ -336,7 +345,8 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // 위험 지역 스트레스
   agent.stress = mix(agent.stress, currentDanger, 0.1);
-  energyCost += agent.stress * 0.02 * dt;
+  // 오염은 이동을 "막기"보단 생존 비용을 올리는 쪽이 자연스러움
+  energyCost += agent.stress * 0.15 * dt * params.energyCostScale;
 
   agent.energy = max(0.0, agent.energy - energyCost);  // 음수 방지
   agent.cooldown = max(0.0, agent.cooldown - dt);
