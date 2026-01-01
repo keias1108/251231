@@ -27,6 +27,8 @@ export interface Simulation {
   pickNearestAgentAtClient(clientX: number, clientY: number, maxPixels: number): Promise<PickedAgent | null>;
   readAgent(index: number): Promise<PickedAgent | null>;
   getConfig(): SimulationConfig;
+  getRenderConfig(): RenderConfig;
+  resetSimulation(): void;
 }
 
 export interface SimulationStats {
@@ -521,6 +523,27 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
     return camera;
   }
 
+  function getRenderConfig(): RenderConfig {
+    return { ...renderConfig };
+  }
+
+  function resetSimulation(): void {
+    // 설정을 기본값으로 리셋
+    config = { ...DEFAULT_CONFIG };
+    renderConfig = { ...DEFAULT_RENDER_CONFIG };
+    simulationTime = 0;
+
+    // 에이전트 시스템 리셋 (초기 에이전트 재생성)
+    agentSystem.reset();
+
+    // 필드 시스템 리셋
+    fieldSystem.reset();
+
+    // 렌더러 설정 업데이트
+    fieldRenderer.updateConfig(renderConfig);
+    agentRenderer.updateConfig(renderConfig);
+  }
+
   return {
     start,
     stop,
@@ -537,5 +560,7 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
     pickNearestAgentAtClient,
     readAgent,
     getConfig: () => ({ ...config }),
+    getRenderConfig,
+    resetSimulation,
   };
 }

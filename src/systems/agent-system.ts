@@ -25,6 +25,7 @@ export interface AgentSystem {
   getRecentUptake(): number; // energy 단위(약)
   getCountBuffer(): GPUBuffer;
   destroy(): void;
+  reset(): void;
 }
 
 export function createAgentSystem(
@@ -280,6 +281,77 @@ export function createAgentSystem(
     clearInterval(intervalId);
   }
 
+  function reset(): void {
+    const initialCount = config.initialAgentCount;
+
+    // 에이전트 데이터 재생성
+    const bufferSize = maxAgents * AGENT_STRUCT_SIZE;
+    const agentData = new Float32Array(bufferSize / 4);
+    const agentView = new DataView(agentData.buffer);
+
+    for (let i = 0; i < initialCount; i++) {
+      const offset = i * AGENT_STRUCT_SIZE;
+
+      // 위치 (랜덤)
+      const posX = Math.random() * config.gridSize;
+      const posY = Math.random() * config.gridSize;
+      const velX = (Math.random() - 0.5) * 2;
+      const velY = (Math.random() - 0.5) * 2;
+
+      agentView.setFloat32(offset + 0, posX, true);
+      agentView.setFloat32(offset + 4, posY, true);
+      agentView.setFloat32(offset + 8, velX, true);
+      agentView.setFloat32(offset + 12, velY, true);
+
+      // 상태
+      const energy = 50 + Math.random() * 50;
+      agentView.setFloat32(offset + 16, energy, true);
+      agentView.setUint32(offset + 20, 0, true);  // mode = EXPLORE
+      agentView.setFloat32(offset + 24, 0, true); // stress
+      agentView.setFloat32(offset + 28, 0, true); // cooldown
+
+      // 유전 파라미터
+      const genetics = createRandomGenetics();
+      agentView.setFloat32(offset + 32, genetics.efficiency ?? GENETIC_RANGES.efficiency.default, true);
+      agentView.setFloat32(offset + 36, genetics.absorption ?? GENETIC_RANGES.absorption.default, true);
+      agentView.setFloat32(offset + 40, genetics.metabolism ?? GENETIC_RANGES.metabolism.default, true);
+      agentView.setFloat32(offset + 44, genetics.moveCost ?? GENETIC_RANGES.moveCost.default, true);
+      agentView.setFloat32(offset + 48, genetics.activity ?? GENETIC_RANGES.activity.default, true);
+      agentView.setFloat32(offset + 52, genetics.agility ?? GENETIC_RANGES.agility.default, true);
+      agentView.setFloat32(offset + 56, genetics.senseRange ?? GENETIC_RANGES.senseRange.default, true);
+      agentView.setFloat32(offset + 60, genetics.aggression ?? GENETIC_RANGES.aggression.default, true);
+      agentView.setFloat32(offset + 64, genetics.evasion ?? GENETIC_RANGES.evasion.default, true);
+      agentView.setFloat32(offset + 68, genetics.sociality ?? GENETIC_RANGES.sociality.default, true);
+      agentView.setFloat32(offset + 72, genetics.reproThreshold ?? GENETIC_RANGES.reproThreshold.default, true);
+      agentView.setFloat32(offset + 76, genetics.reproCooldown ?? GENETIC_RANGES.reproCooldown.default, true);
+
+      // 플래그
+      agentView.setUint32(offset + 80, 1, true);  // alive = true
+      agentView.setFloat32(offset + 84, 0, true); // age
+      agentView.setUint32(offset + 88, 0, true);  // generation
+      agentView.setUint32(offset + 92, 0, true);  // padding
+    }
+
+    // 버퍼에 데이터 쓰기
+    device.queue.writeBuffer(buffer, 0, agentData);
+
+    // 카운트 리셋
+    device.queue.writeBuffer(countBuffer, 0, new Uint32Array([initialCount]));
+
+    // 메트릭 리셋
+    device.queue.writeBuffer(metricsBuffer, 0, new Uint32Array([initialCount, 0, 0, 0]));
+
+    // 프리리스트 리셋
+    device.queue.writeBuffer(freeListBuffer, 0, new Uint32Array(4 + maxAgents));
+
+    // 로컬 상태 리셋
+    currentAgentCount = initialCount;
+    currentAliveCount = initialCount;
+    recentBirths = 0;
+    recentDeaths = 0;
+    recentUptake = 0;
+  }
+
   return {
     buffer,
     countBuffer,
@@ -295,5 +367,6 @@ export function createAgentSystem(
     getRecentUptake: () => recentUptake / 1_000_000, // micro -> energy
     getCountBuffer: () => countBuffer,
     destroy,
+    reset,
   };
 }

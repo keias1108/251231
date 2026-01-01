@@ -5,6 +5,7 @@
 
 import { Camera } from '../render/camera';
 import { Simulation } from '../core/simulation';
+import { t } from '../i18n';
 
 export interface ProbeUI {
   destroy(): void;
@@ -40,13 +41,13 @@ export function createProbeUI(
     const probe = simulation.getProbeData();
     if (!probe) return;
     probeElement.innerHTML = `
-      <div style="font-weight: 600; margin-bottom: 4px;">Probe</div>
-      <div>Cell: (${probe.x}, ${probe.y})</div>
-      <div>Height(H): ${probe.height.toFixed(3)}</div>
-      <div>Terrain(Z): ${probe.terrain.toFixed(3)}</div>
-      <div>Resource(F): ${probe.resource.toFixed(3)}</div>
-      <div>Danger(R): ${probe.danger.toFixed(3)}</div>
-      <div>Pheromone(P): ${probe.pheromone.toFixed(3)}</div>
+      <div style="font-weight: 600; margin-bottom: 4px;">${t('probe.title')}</div>
+      <div>${t('probe.cell')}: (${probe.x}, ${probe.y})</div>
+      <div>${t('probe.height')}: ${probe.height.toFixed(3)}</div>
+      <div>${t('probe.terrain')}: ${probe.terrain.toFixed(3)}</div>
+      <div>${t('probe.resource')}: ${probe.resource.toFixed(3)}</div>
+      <div>${t('probe.danger')}: ${probe.danger.toFixed(3)}</div>
+      <div>${t('probe.pheromone')}: ${probe.pheromone.toFixed(3)}</div>
     `;
   }, 200);
 
@@ -59,4 +60,3 @@ export function createProbeUI(
 
   return { destroy };
 }
-

@@ -1,10 +1,11 @@
 /**
  * @fileoverview 에이전트 선택/검사 UI
- * 클릭으로 에이전트를 선택하고 드래그 가능한 모달과 연결선을 표시한다.
+ * Shift+클릭으로 에이전트를 선택하고 드래그 가능한 모달과 연결선을 표시한다.
  */
 
 import { Camera } from '../render/camera';
 import { Simulation, PickedAgent, ProbeData } from '../core/simulation';
+import { t, onLanguageChange } from '../i18n';
 
 export interface AgentInspector {
   destroy(): void;
@@ -16,10 +17,10 @@ function clamp(v: number, min: number, max: number): number {
 
 function modeLabel(mode: number): string {
   switch (mode) {
-    case 0: return 'EXPLORE';
-    case 1: return 'INTAKE';
-    case 2: return 'EVADE';
-    case 3: return 'REPRODUCE';
+    case 0: return t('agent.modes.explore');
+    case 1: return t('agent.modes.intake');
+    case 2: return t('agent.modes.evade');
+    case 3: return t('agent.modes.reproduce');
     default: return `MODE(${mode})`;
   }
 }
@@ -54,7 +55,7 @@ function projectWorldToClient(
 }
 
 function formatProbe(probe: ProbeData | null): string {
-  if (!probe) return 'Field: (loading...)';
+  if (!probe) return `${t('agent.field')}: (${t('agent.loading')})`;
   return `H ${probe.height.toFixed(3)} | Z ${probe.terrain.toFixed(3)} | F ${probe.resource.toFixed(3)} | R ${probe.danger.toFixed(3)} | P ${probe.pheromone.toFixed(3)}`;
 }
 
@@ -63,6 +64,8 @@ export function createAgentInspector(
   camera: Camera,
   simulation: Simulation
 ): AgentInspector {
+  let unsubscribe: (() => void) | null = null;
+
   const overlay = document.createElement('div');
   overlay.style.position = 'fixed';
   overlay.style.left = '0';
@@ -111,7 +114,7 @@ export function createAgentInspector(
 
   const title = document.createElement('div');
   title.style.fontWeight = '600';
-  title.textContent = 'Agent';
+  title.textContent = t('agent.title');
 
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '×';
@@ -130,7 +133,7 @@ export function createAgentInspector(
   const body = document.createElement('div');
   body.style.padding = '10px';
   body.style.lineHeight = '1.45';
-  body.innerHTML = `<div style="opacity:0.85;">캔버스를 클릭해 에이전트를 선택하세요.</div>`;
+  body.innerHTML = `<div style="opacity:0.85;">${t('agent.selectHint')}</div>`;
 
   panel.appendChild(header);
   panel.appendChild(body);
@@ -140,6 +143,12 @@ export function createAgentInspector(
   document.body.appendChild(overlay);
 
   let selected: PickedAgent | null = null;
+
+  function updateDefaultText(): void {
+    if (!selected) {
+      body.innerHTML = `<div style="opacity:0.85;">${t('agent.selectHint')}</div>`;
+    }
+  }
   let selectedField: ProbeData | null = null;
   let rafId: number | null = null;
   let pollingId: number | null = null;
@@ -184,31 +193,31 @@ export function createAgentInspector(
     const geneticsSpeedHint = selected.activity;
     body.innerHTML = `
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <div><span style="opacity:0.8;">ID</span> ${selected.index}</div>
-        <div><span style="opacity:0.8;">Mode</span> ${modeLabel(selected.mode)}</div>
-        <div><span style="opacity:0.8;">Gen</span> ${selected.generation}</div>
+        <div><span style="opacity:0.8;">${t('agent.id')}</span> ${selected.index}</div>
+        <div><span style="opacity:0.8;">${t('agent.mode')}</span> ${modeLabel(selected.mode)}</div>
+        <div><span style="opacity:0.8;">${t('agent.generation')}</span> ${selected.generation}</div>
       </div>
       <div style="margin-top:6px;">${formatProbe(selectedField)}</div>
       <hr style="border:0;border-top:1px solid rgba(255,255,255,0.12); margin:8px 0;" />
-      <div><span style="opacity:0.8;">Energy</span> ${selected.energy.toFixed(2)}</div>
-      <div><span style="opacity:0.8;">Speed</span> ${speed.toFixed(2)} <span style="opacity:0.7;">(actual)</span></div>
-      <div><span style="opacity:0.8;">Activity</span> ${geneticsSpeedHint.toFixed(2)} <span style="opacity:0.7;">(genetic)</span></div>
-      <div><span style="opacity:0.8;">Stress</span> ${selected.stress.toFixed(3)}</div>
-      <div><span style="opacity:0.8;">Cooldown</span> ${selected.cooldown.toFixed(2)}</div>
-      <div><span style="opacity:0.8;">Age</span> ${selected.age.toFixed(1)}</div>
+      <div><span style="opacity:0.8;">${t('agent.energy')}</span> ${selected.energy.toFixed(2)}</div>
+      <div><span style="opacity:0.8;">${t('agent.speed')}</span> ${speed.toFixed(2)} <span style="opacity:0.7;">(${t('agent.actual')})</span></div>
+      <div><span style="opacity:0.8;">${t('agent.activity')}</span> ${geneticsSpeedHint.toFixed(2)} <span style="opacity:0.7;">(${t('agent.genetic')})</span></div>
+      <div><span style="opacity:0.8;">${t('agent.stress')}</span> ${selected.stress.toFixed(3)}</div>
+      <div><span style="opacity:0.8;">${t('agent.cooldown')}</span> ${selected.cooldown.toFixed(2)}</div>
+      <div><span style="opacity:0.8;">${t('agent.age')}</span> ${selected.age.toFixed(1)}</div>
       <hr style="border:0;border-top:1px solid rgba(255,255,255,0.12); margin:8px 0;" />
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 10px;">
-        <div><span style="opacity:0.8;">eff</span> ${selected.efficiency.toFixed(2)}</div>
-        <div><span style="opacity:0.8;">abs</span> ${selected.absorption.toFixed(2)}</div>
-        <div><span style="opacity:0.8;">meta</span> ${selected.metabolism.toFixed(3)}</div>
-        <div><span style="opacity:0.8;">move</span> ${selected.moveCost.toFixed(3)}</div>
-        <div><span style="opacity:0.8;">agil</span> ${selected.agility.toFixed(2)}</div>
-        <div><span style="opacity:0.8;">sense</span> ${selected.senseRange.toFixed(1)}</div>
-        <div><span style="opacity:0.8;">aggr</span> ${selected.aggression.toFixed(2)}</div>
-        <div><span style="opacity:0.8;">evad</span> ${selected.evasion.toFixed(2)}</div>
-        <div><span style="opacity:0.8;">soc</span> ${selected.sociality.toFixed(2)}</div>
-        <div><span style="opacity:0.8;">T_b</span> ${selected.reproThreshold.toFixed(0)}</div>
-        <div><span style="opacity:0.8;">C_b</span> ${selected.reproCooldown.toFixed(0)}</div>
+        <div><span style="opacity:0.8;">${t('agent.eff')}</span> ${selected.efficiency.toFixed(2)}</div>
+        <div><span style="opacity:0.8;">${t('agent.abs')}</span> ${selected.absorption.toFixed(2)}</div>
+        <div><span style="opacity:0.8;">${t('agent.meta')}</span> ${selected.metabolism.toFixed(3)}</div>
+        <div><span style="opacity:0.8;">${t('agent.move')}</span> ${selected.moveCost.toFixed(3)}</div>
+        <div><span style="opacity:0.8;">${t('agent.agil')}</span> ${selected.agility.toFixed(2)}</div>
+        <div><span style="opacity:0.8;">${t('agent.sense')}</span> ${selected.senseRange.toFixed(1)}</div>
+        <div><span style="opacity:0.8;">${t('agent.aggr')}</span> ${selected.aggression.toFixed(2)}</div>
+        <div><span style="opacity:0.8;">${t('agent.evad')}</span> ${selected.evasion.toFixed(2)}</div>
+        <div><span style="opacity:0.8;">${t('agent.soc')}</span> ${selected.sociality.toFixed(2)}</div>
+        <div><span style="opacity:0.8;">${t('agent.reproThreshold')}</span> ${selected.reproThreshold.toFixed(0)}</div>
+        <div><span style="opacity:0.8;">${t('agent.reproCooldown')}</span> ${selected.reproCooldown.toFixed(0)}</div>
       </div>
     `;
   }
@@ -245,7 +254,7 @@ export function createAgentInspector(
     selected = picked;
     selectedField = await simulation.readFieldCell(Math.floor(selected.posX), Math.floor(selected.posY));
 
-    title.textContent = `Agent #${selected.index}`;
+    title.textContent = `${t('agent.title')} #${selected.index}`;
     panelX = e.clientX + 14;
     panelY = e.clientY + 14;
     setVisible(true);
@@ -254,7 +263,7 @@ export function createAgentInspector(
   }
 
   function onCanvasClick(e: MouseEvent): void {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !e.shiftKey) return;
     handlePick(e).catch(console.error);
   }
 
@@ -291,6 +300,16 @@ export function createAgentInspector(
     setVisible(false);
   }
 
+  // 언어 변경 시 업데이트
+  unsubscribe = onLanguageChange(() => {
+    title.textContent = selected ? `${t('agent.title')} #${selected.index}` : t('agent.title');
+    if (selected) {
+      renderPanel();
+    } else {
+      updateDefaultText();
+    }
+  });
+
   closeBtn.addEventListener('click', onClose);
   header.addEventListener('mousedown', onHeaderMouseDown);
   window.addEventListener('mousemove', onWindowMouseMove);
@@ -313,6 +332,7 @@ export function createAgentInspector(
   function destroy(): void {
     if (rafId !== null) cancelAnimationFrame(rafId);
     if (pollingId !== null) clearInterval(pollingId);
+    if (unsubscribe) unsubscribe();
     closeBtn.removeEventListener('click', onClose);
     header.removeEventListener('mousedown', onHeaderMouseDown);
     window.removeEventListener('mousemove', onWindowMouseMove);

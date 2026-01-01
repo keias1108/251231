@@ -11,8 +11,13 @@ import { createStats } from './ui/stats';
 import { createLegend } from './ui/legend';
 import { createProbeUI } from './ui/probe';
 import { createAgentInspector } from './ui/agent-inspector';
+import { createShortcuts } from './ui/shortcuts';
+import { initLanguage } from './i18n';
 
 async function main(): Promise<void> {
+  // i18n 초기화 (localStorage에서 언어 설정 불러오기)
+  initLanguage();
+
   const canvas = document.getElementById('canvas') as HTMLCanvasElement;
   const statsElement = document.getElementById('stats') as HTMLElement;
   const infoPanel = document.getElementById('info-panel') as HTMLElement;
@@ -36,6 +41,11 @@ async function main(): Promise<void> {
     const probeUI = createProbeUI(canvas, simulation.getCamera(), simulation, legend.getProbeElement());
     const inspector = createAgentInspector(canvas, simulation.getCamera(), simulation);
 
+    // 단축키 초기화
+    const shortcuts = createShortcuts(simulation, {
+      onSaveConfig: () => controls.saveConfig(),
+    });
+
     // 시뮬레이션 시작
     console.log('Starting simulation...');
     simulation.start();
@@ -47,6 +57,10 @@ async function main(): Promise<void> {
     console.log('  - Right drag: Rotate');
     console.log('  - Scroll: Zoom');
     console.log('  - WASD/Arrows: Move');
+    console.log('  - Shift+Click: Select agent');
+    console.log('  - Space: Pause/Resume');
+    console.log('  - Alt+Z: Reset simulation');
+    console.log('  - Alt+S: Save config');
 
     // 정리 (페이지 이탈 시)
     window.addEventListener('beforeunload', () => {
@@ -57,6 +71,7 @@ async function main(): Promise<void> {
       probeUI.destroy();
       legend.destroy();
       inspector.destroy();
+      shortcuts.destroy();
     });
 
   } catch (error) {

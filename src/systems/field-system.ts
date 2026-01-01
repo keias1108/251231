@@ -37,6 +37,7 @@ export interface FieldSystem {
   getDangerBuffer(): GPUBuffer;
   getPheromoneBuffer(): GPUBuffer;        // 현재 상태(읽기/렌더용)
   sampleHeightNormalizedAt(x: number, y: number): number;
+  reset(): void;
 }
 
 export function createFieldSystem(
@@ -193,6 +194,21 @@ export function createFieldSystem(
     currentBuffer = 1 - currentBuffer;
   }
 
+  function reset(): void {
+    // 자원 필드 리셋
+    const newResourceData = createResourceField(gridSize);
+    device.queue.writeBuffer(buffers.resource[0], 0, newResourceData.buffer);
+    device.queue.writeBuffer(buffers.resource[1], 0, newResourceData.buffer);
+
+    // 페로몬 필드 리셋
+    const newPheromoneData = createEmptyField(gridSize);
+    device.queue.writeBuffer(buffers.pheromone[0], 0, newPheromoneData.buffer);
+    device.queue.writeBuffer(buffers.pheromone[1], 0, newPheromoneData.buffer);
+
+    // 버퍼 인덱스 리셋
+    currentBuffer = 0;
+  }
+
   return {
     buffers,
     pipeline,
@@ -205,5 +221,6 @@ export function createFieldSystem(
     getDangerBuffer: () => buffers.danger,
     getPheromoneBuffer: () => buffers.pheromone[currentBuffer],
     sampleHeightNormalizedAt,
+    reset,
   };
 }
