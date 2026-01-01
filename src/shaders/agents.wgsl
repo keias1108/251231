@@ -57,6 +57,29 @@ struct Metrics {
   births: atomic<u32>,
   deaths: atomic<u32>,
   uptakeMicro: atomic<u32>,
+  // 진화 관측(최근 윈도우): 샘플링 기반 집단 평균
+  sampleCount: atomic<u32>,
+  sumEffMilli: atomic<u32>,
+  sumMetabMilli: atomic<u32>,
+  sumActMilli: atomic<u32>,
+  sumSenseDeci: atomic<u32>,
+  sumEvasionMilli: atomic<u32>,
+  sumSocialMilli: atomic<u32>,
+
+  // 출생/사망 집단 평균(최근 윈도우): 선택 방향 관측용
+  birthsEffMilli: atomic<u32>,
+  birthsMetabMilli: atomic<u32>,
+  birthsActMilli: atomic<u32>,
+  birthsSenseDeci: atomic<u32>,
+  birthsEvasionMilli: atomic<u32>,
+  birthsSocialMilli: atomic<u32>,
+
+  deathsEffMilli: atomic<u32>,
+  deathsMetabMilli: atomic<u32>,
+  deathsActMilli: atomic<u32>,
+  deathsSenseDeci: atomic<u32>,
+  deathsEvasionMilli: atomic<u32>,
+  deathsSocialMilli: atomic<u32>,
 }
 
 struct FreeList {
@@ -243,14 +266,14 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
     let uptakePenalty = clamp(1.0 - currentDanger * 0.9, 0.0, 1.0);
     let expectedGain = baseUptake * uptakePenalty;
 
-    // 위험이 극단적으로 높으면 우선 이탈
-    if (panic) {
-      newMode = MODE_EVADE;
-    } else if (currentRes > 0.12 && expectedGain > 0.01) {
-      newMode = MODE_INTAKE;
-    } else {
-      newMode = MODE_EXPLORE;
-    }
+  // 위험이 극단적으로 높으면 우선 이탈
+  if (panic) {
+    newMode = MODE_EVADE;
+  } else if (currentRes > 0.12 && expectedGain > 0.01) {
+    newMode = MODE_INTAKE;
+  } else {
+    newMode = MODE_EXPLORE;
+  }
   }
 
   agent.mode = newMode;
@@ -316,7 +339,9 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   if (newMode == MODE_INTAKE) {
     // 섭취
     // 오염이 높을수록 "오염된 먹이"처럼 순이익이 줄어듦 (C: 보상↓ + 비용↑)
-    let uptakePenalty = clamp(1.0 - currentDanger * 0.9, 0.0, 1.0);
+    // evasion을 '독성 저항/해독 능력'으로도 해석: 높을수록 오염 민감도 감소(대신 유지비 추가)
+    let toxinSensitivity = 1.0 - clamp(agent.evasion, 0.0, 1.0);
+    let uptakePenalty = clamp(1.0 - currentDanger * 0.9 * toxinSensitivity, 0.0, 1.0);
     let uptakeAmount = uptake(currentRes, agent.absorption) * agent.efficiency * params.uptakeScale * uptakePenalty * dt;
     agent.energy += uptakeAmount;
 
@@ -346,7 +371,15 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
   // 위험 지역 스트레스
   agent.stress = mix(agent.stress, currentDanger, 0.1);
   // 오염은 이동을 "막기"보단 생존 비용을 올리는 쪽이 자연스러움
-  energyCost += agent.stress * 0.15 * dt * params.energyCostScale;
+  let toxinSensitivity = 1.0 - clamp(agent.evasion, 0.0, 1.0);
+  energyCost += agent.stress * toxinSensitivity * 0.15 * dt * params.energyCostScale;
+
+  // 해독/저항 유지비(트레이드오프): evasion이 높을수록 항상 약간의 비용을 지불
+  energyCost += agent.evasion * 0.02 * dt * params.energyCostScale;
+
+  // 센싱/뇌 비용(트레이드오프): 범위가 넓을수록 비용 증가 (자연선택이 더 또렷해짐)
+  let senseNorm = clamp(agent.senseRange / 50.0, 0.0, 1.0);
+  energyCost += (senseNorm * senseNorm) * 0.03 * dt * params.energyCostScale;
 
   agent.energy = max(0.0, agent.energy - energyCost);  // 음수 방지
   agent.cooldown = max(0.0, agent.cooldown - dt);
@@ -358,11 +391,30 @@ fn updateAgents(@builtin(global_invocation_id) id: vec3<u32>) {
     agent.alive = 0u;
     atomicAdd(&metrics.deaths, 1u);
     atomicSub(&metrics.alive, 1u);
+    atomicAdd(&metrics.deathsEffMilli, u32(agent.efficiency * 1000.0));
+    atomicAdd(&metrics.deathsMetabMilli, u32(agent.metabolism * 1000.0));
+    atomicAdd(&metrics.deathsActMilli, u32(agent.activity * 1000.0));
+    atomicAdd(&metrics.deathsSenseDeci, u32(agent.senseRange * 10.0));
+    atomicAdd(&metrics.deathsEvasionMilli, u32(agent.evasion * 1000.0));
+    atomicAdd(&metrics.deathsSocialMilli, u32(agent.sociality * 1000.0));
     freeListPush(idx);
   } else if (newMode == MODE_REPRODUCE && agent.cooldown <= 0.0) {
     // 번식 시도 (실제 번식은 별도 커널에서 처리)
     agent.energy *= 0.5;  // 에너지 분할
     agent.cooldown = agent.reproCooldown;
+  }
+
+  // === 7. 관측용 샘플링(집단 평균) ===
+  // 모든 개체를 CPU로 읽지 않고도 자연선택 방향을 볼 수 있게,
+  // 작은 확률로 샘플링해서 최근 윈도우 평균을 누적한다.
+  if (hash(idx * 2654435761u + u32(params.time * 1000.0)) < 0.002) {
+    atomicAdd(&metrics.sampleCount, 1u);
+    atomicAdd(&metrics.sumEffMilli, u32(agent.efficiency * 1000.0));
+    atomicAdd(&metrics.sumMetabMilli, u32(agent.metabolism * 1000.0));
+    atomicAdd(&metrics.sumActMilli, u32(agent.activity * 1000.0));
+    atomicAdd(&metrics.sumSenseDeci, u32(agent.senseRange * 10.0));
+    atomicAdd(&metrics.sumEvasionMilli, u32(agent.evasion * 1000.0));
+    atomicAdd(&metrics.sumSocialMilli, u32(agent.sociality * 1000.0));
   }
 
   agents[idx] = agent;
@@ -448,4 +500,10 @@ fn processReproduction(@builtin(global_invocation_id) id: vec3<u32>) {
   agents[newIdx] = child;
   atomicAdd(&metrics.births, 1u);
   atomicAdd(&metrics.alive, 1u);
+  atomicAdd(&metrics.birthsEffMilli, u32(child.efficiency * 1000.0));
+  atomicAdd(&metrics.birthsMetabMilli, u32(child.metabolism * 1000.0));
+  atomicAdd(&metrics.birthsActMilli, u32(child.activity * 1000.0));
+  atomicAdd(&metrics.birthsSenseDeci, u32(child.senseRange * 10.0));
+  atomicAdd(&metrics.birthsEvasionMilli, u32(child.evasion * 1000.0));
+  atomicAdd(&metrics.birthsSocialMilli, u32(child.sociality * 1000.0));
 }

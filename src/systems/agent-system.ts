@@ -23,9 +23,22 @@ export interface AgentSystem {
   getRecentBirths(): number;
   getRecentDeaths(): number;
   getRecentUptake(): number; // energy 단위(약)
+  getEvolutionSample(): EvolutionSample;
+  getEvolutionBirths(): EvolutionSample;
+  getEvolutionDeaths(): EvolutionSample;
   getCountBuffer(): GPUBuffer;
   destroy(): void;
   reset(): void;
+}
+
+export interface EvolutionSample {
+  count: number;
+  efficiency: number;
+  metabolism: number;
+  activity: number;
+  senseRange: number;
+  evasion: number;
+  sociality: number;
 }
 
 export function createAgentSystem(
@@ -163,7 +176,9 @@ export function createAgentSystem(
   let recentUptake = 0;
 
   // 메트릭 버퍼 (alive/births/deaths/uptake)
-  const metricsInit = new Uint32Array([initialCount, 0, 0, 0]);
+  const METRICS_U32_COUNT = 23;
+  const metricsInit = new Uint32Array(METRICS_U32_COUNT);
+  metricsInit[0] = initialCount;
   const metricsBuffer = createBuffer(
     device,
     metricsInit,
@@ -183,12 +198,28 @@ export function createAgentSystem(
   // 카운트/메트릭 읽기용 버퍼
   const readbackBuffer = device.createBuffer({
     label: 'agentCountersReadback',
-    size: 20,
+    size: 4 + METRICS_U32_COUNT * 4,
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   });
 
   let bindGroup: GPUBindGroup | null = null;
   let isReadbackMapped = false;
+
+  let evolutionSample: EvolutionSample = { count: 0, efficiency: 0, metabolism: 0, activity: 0, senseRange: 0, evasion: 0, sociality: 0 };
+  // 출생/사망 형질은 짧은 창(window) 평균이 노이즈가 커서, 장기 EMA로 노출
+  const EMA_TAU_SECONDS = 60;
+  let evolutionBirths: EvolutionSample = { count: 0, efficiency: 0, metabolism: 0, activity: 0, senseRange: 0, evasion: 0, sociality: 0 };
+  let evolutionDeaths: EvolutionSample = { count: 0, efficiency: 0, metabolism: 0, activity: 0, senseRange: 0, evasion: 0, sociality: 0 };
+  let lastEmaUpdateMs = performance.now();
+
+  function alphaForEma(dtSeconds: number): number {
+    const dt = Math.max(0, dtSeconds);
+    return 1 - Math.exp(-dt / EMA_TAU_SECONDS);
+  }
+
+  function emaUpdate(prev: number, next: number, alpha: number): number {
+    return prev * (1 - alpha) + next * alpha;
+  }
 
   function update(
     encoder: GPUCommandEncoder,
@@ -250,7 +281,7 @@ export function createAgentSystem(
     // 에이전트 카운트 읽기 (비동기) - 매핑 중이 아닐 때만 복사
     if (!isReadbackMapped) {
       encoder.copyBufferToBuffer(countBuffer, 0, readbackBuffer, 0, 4);
-      encoder.copyBufferToBuffer(metricsBuffer, 0, readbackBuffer, 4, 16);
+      encoder.copyBufferToBuffer(metricsBuffer, 0, readbackBuffer, 4, METRICS_U32_COUNT * 4);
     }
   }
 
@@ -267,10 +298,89 @@ export function createAgentSystem(
       recentBirths = data[2];
       recentDeaths = data[3];
       recentUptake = data[4];
+
+      const sampleCount = data[5];
+      const sumEffMilli = data[6];
+      const sumMetabMilli = data[7];
+      const sumActMilli = data[8];
+      const sumSenseDeci = data[9];
+      const sumEvasionMilli = data[10];
+      const sumSocialMilli = data[11];
+
+      const birthsEffMilli = data[12];
+      const birthsMetabMilli = data[13];
+      const birthsActMilli = data[14];
+      const birthsSenseDeci = data[15];
+      const birthsEvasionMilli = data[16];
+      const birthsSocialMilli = data[17];
+
+      const deathsEffMilli = data[18];
+      const deathsMetabMilli = data[19];
+      const deathsActMilli = data[20];
+      const deathsSenseDeci = data[21];
+      const deathsEvasionMilli = data[22];
+      const deathsSocialMilli = data[23];
+
+      evolutionSample = {
+        count: sampleCount,
+        efficiency: sampleCount ? sumEffMilli / 1000 / sampleCount : 0,
+        metabolism: sampleCount ? sumMetabMilli / 1000 / sampleCount : 0,
+        activity: sampleCount ? sumActMilli / 1000 / sampleCount : 0,
+        senseRange: sampleCount ? sumSenseDeci / 10 / sampleCount : 0,
+        evasion: sampleCount ? sumEvasionMilli / 1000 / sampleCount : 0,
+        sociality: sampleCount ? sumSocialMilli / 1000 / sampleCount : 0,
+      };
+
+      const nowMs = performance.now();
+      const dtSeconds = (nowMs - lastEmaUpdateMs) / 1000;
+      lastEmaUpdateMs = nowMs;
+      const alpha = alphaForEma(dtSeconds);
+
+      if (recentBirths > 0) {
+        const birthsBatch: EvolutionSample = {
+          count: recentBirths,
+          efficiency: birthsEffMilli / 1000 / recentBirths,
+          metabolism: birthsMetabMilli / 1000 / recentBirths,
+          activity: birthsActMilli / 1000 / recentBirths,
+          senseRange: birthsSenseDeci / 10 / recentBirths,
+          evasion: birthsEvasionMilli / 1000 / recentBirths,
+          sociality: birthsSocialMilli / 1000 / recentBirths,
+        };
+        evolutionBirths = {
+          count: evolutionBirths.count + recentBirths,
+          efficiency: emaUpdate(evolutionBirths.efficiency, birthsBatch.efficiency, alpha),
+          metabolism: emaUpdate(evolutionBirths.metabolism, birthsBatch.metabolism, alpha),
+          activity: emaUpdate(evolutionBirths.activity, birthsBatch.activity, alpha),
+          senseRange: emaUpdate(evolutionBirths.senseRange, birthsBatch.senseRange, alpha),
+          evasion: emaUpdate(evolutionBirths.evasion, birthsBatch.evasion, alpha),
+          sociality: emaUpdate(evolutionBirths.sociality, birthsBatch.sociality, alpha),
+        };
+      }
+
+      if (recentDeaths > 0) {
+        const deathsBatch: EvolutionSample = {
+          count: recentDeaths,
+          efficiency: deathsEffMilli / 1000 / recentDeaths,
+          metabolism: deathsMetabMilli / 1000 / recentDeaths,
+          activity: deathsActMilli / 1000 / recentDeaths,
+          senseRange: deathsSenseDeci / 10 / recentDeaths,
+          evasion: deathsEvasionMilli / 1000 / recentDeaths,
+          sociality: deathsSocialMilli / 1000 / recentDeaths,
+        };
+        evolutionDeaths = {
+          count: evolutionDeaths.count + recentDeaths,
+          efficiency: emaUpdate(evolutionDeaths.efficiency, deathsBatch.efficiency, alpha),
+          metabolism: emaUpdate(evolutionDeaths.metabolism, deathsBatch.metabolism, alpha),
+          activity: emaUpdate(evolutionDeaths.activity, deathsBatch.activity, alpha),
+          senseRange: emaUpdate(evolutionDeaths.senseRange, deathsBatch.senseRange, alpha),
+          evasion: emaUpdate(evolutionDeaths.evasion, deathsBatch.evasion, alpha),
+          sociality: emaUpdate(evolutionDeaths.sociality, deathsBatch.sociality, alpha),
+        };
+      }
       readbackBuffer.unmap();
 
       // 최근값(누적)을 리셋 (alive는 유지)
-      device.queue.writeBuffer(metricsBuffer, 4, new Uint32Array([0, 0, 0]));
+      device.queue.writeBuffer(metricsBuffer, 4, new Uint32Array(METRICS_U32_COUNT - 1));
     } finally {
       isReadbackMapped = false;
     }
@@ -343,7 +453,9 @@ export function createAgentSystem(
     device.queue.writeBuffer(countBuffer, 0, new Uint32Array([initialCount]));
 
     // 메트릭 리셋
-    device.queue.writeBuffer(metricsBuffer, 0, new Uint32Array([initialCount, 0, 0, 0]));
+    const resetMetrics = new Uint32Array(METRICS_U32_COUNT);
+    resetMetrics[0] = initialCount;
+    device.queue.writeBuffer(metricsBuffer, 0, resetMetrics);
 
     // 프리리스트 리셋
     device.queue.writeBuffer(freeListBuffer, 0, new Uint32Array(4 + maxAgents));
@@ -354,6 +466,10 @@ export function createAgentSystem(
     recentBirths = 0;
     recentDeaths = 0;
     recentUptake = 0;
+    evolutionSample = { count: 0, efficiency: 0, metabolism: 0, activity: 0, senseRange: 0, evasion: 0, sociality: 0 };
+    evolutionBirths = { count: 0, efficiency: 0, metabolism: 0, activity: 0, senseRange: 0, evasion: 0, sociality: 0 };
+    evolutionDeaths = { count: 0, efficiency: 0, metabolism: 0, activity: 0, senseRange: 0, evasion: 0, sociality: 0 };
+    lastEmaUpdateMs = performance.now();
   }
 
   return {
@@ -369,6 +485,9 @@ export function createAgentSystem(
     getRecentBirths: () => recentBirths,
     getRecentDeaths: () => recentDeaths,
     getRecentUptake: () => recentUptake / 1_000_000, // micro -> energy
+    getEvolutionSample: () => evolutionSample,
+    getEvolutionBirths: () => evolutionBirths,
+    getEvolutionDeaths: () => evolutionDeaths,
     getCountBuffer: () => countBuffer,
     destroy,
     reset,

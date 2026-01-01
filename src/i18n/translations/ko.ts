@@ -44,6 +44,7 @@ export const ko = {
 
   // 통계 HUD
   stats: {
+    title: '통계',
     fps: 'FPS',
     frame: '프레임',
     agents: '에이전트',
@@ -54,6 +55,10 @@ export const ko = {
     deathsRecent: '사망 (최근)',
     uptakeRecent: '섭취 (최근)',
     time: '시간',
+    evoSample: '집단 샘플 평균',
+    evoBirths: '출생 집단 평균 (EMA 60초)',
+    evoDeaths: '사망 집단 평균 (EMA 60초)',
+    toxinRes: '오염 저항',
     paused: '일시정지',
   },
 

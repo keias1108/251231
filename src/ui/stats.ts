@@ -50,7 +50,7 @@ export function createStats(
     statsElement.innerHTML = `
       <div class="stats-header">
         <span class="collapse-btn">${collapseIcon}</span>
-        <span style="font-weight: 600;">HUD</span>
+        <span style="font-weight: 600;">${t('stats.title')}</span>
       </div>
       <div class="stats-content" style="margin-top: 4px;"></div>
     `;
@@ -69,6 +69,25 @@ export function createStats(
     const contentEl = statsElement.querySelector('.stats-content');
     if (!contentEl) return;
 
+    const s = stats.evolutionSample;
+    const b = stats.evolutionBirths;
+    const d = stats.evolutionDeaths;
+
+    const fmt = (value: number, digits: number) => Number.isFinite(value) ? value.toFixed(digits) : '0';
+
+    const lblEff = t('agent.eff');
+    const lblMeta = t('agent.meta');
+    const lblAct = t('agent.activity');
+    const lblSense = t('agent.sense');
+    const lblToxRes = t('stats.toxinRes');
+    const lblSoc = t('agent.soc');
+
+    const evoLineWithCount = (e: { count: number; efficiency: number; metabolism: number; activity: number; senseRange: number; evasion: number; sociality: number }) =>
+      `n=${e.count} ${lblEff}=${fmt(e.efficiency, 2)} ${lblMeta}=${fmt(e.metabolism, 3)} ${lblAct}=${fmt(e.activity, 2)} ${lblSense}=${fmt(e.senseRange, 1)} ${lblToxRes}=${fmt(e.evasion, 2)} ${lblSoc}=${fmt(e.sociality, 2)}`;
+
+    const evoLine = (e: { efficiency: number; metabolism: number; activity: number; senseRange: number; evasion: number; sociality: number }) =>
+      `${lblEff}=${fmt(e.efficiency, 2)} ${lblMeta}=${fmt(e.metabolism, 3)} ${lblAct}=${fmt(e.activity, 2)} ${lblSense}=${fmt(e.senseRange, 1)} ${lblToxRes}=${fmt(e.evasion, 2)} ${lblSoc}=${fmt(e.sociality, 2)}`;
+
     contentEl.innerHTML = `
       <div>${t('stats.fps')}: ${stats.fps}</div>
       <div>${t('stats.frame')}: ${stats.frameTime.toFixed(1)}ms</div>
@@ -77,6 +96,9 @@ export function createStats(
       <div>${t('stats.deathsRecent')}: ${stats.deaths.toLocaleString()}</div>
       <div>${t('stats.uptakeRecent')}: ${stats.uptake.toFixed(2)}</div>
       <div>${t('stats.time')}: ${formatTime(stats.time)}</div>
+      <div style="margin-top: 6px;">${t('stats.evoSample')}: ${evoLineWithCount(s)}</div>
+      <div>${t('stats.evoBirths')}: ${evoLine(b)}</div>
+      <div>${t('stats.evoDeaths')}: ${evoLine(d)}</div>
       ${stats.paused ? `<div style="color: #f39c12;">${t('stats.paused')}</div>` : ''}
     `;
   }

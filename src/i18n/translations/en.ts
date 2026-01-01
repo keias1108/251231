@@ -44,6 +44,7 @@ export const en = {
 
   // Stats HUD
   stats: {
+    title: 'Stats',
     fps: 'FPS',
     frame: 'Frame',
     agents: 'Agents',
@@ -54,6 +55,10 @@ export const en = {
     deathsRecent: 'Deaths (recent)',
     uptakeRecent: 'Uptake (recent)',
     time: 'Time',
+    evoSample: 'Population sample mean',
+    evoBirths: 'Birth trait mean (EMA 60s)',
+    evoDeaths: 'Death trait mean (EMA 60s)',
+    toxinRes: 'Toxin res',
     paused: 'PAUSED',
   },
 

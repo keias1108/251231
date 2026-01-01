@@ -132,10 +132,14 @@ fn updateFields(@builtin(global_invocation_id) id: vec3<u32>) {
   res += diffusion * dt;
 
   // 소산
-  res *= (1.0 - params.resourceDecay * dt);
+  // 오염이 높을수록 자원 유지가 어려움(부패/오염/미생물 경쟁 같은 효과)
+  let toxHere = dangerIn[i];
+  res *= (1.0 - (params.resourceDecay * (1.0 + toxHere * 2.0)) * dt);
 
   // 생성
-  res += resourceGeneration(x, y, params.time) * dt;
+  // 오염이 높으면 생성/재생이 억제됨 (외부 강제 패치가 환경을 "끌고 가는" 느낌 완화)
+  let spawnSuppression = clamp(1.0 - toxHere, 0.0, 1.0);
+  res += resourceGeneration(x, y, params.time) * spawnSuppression * dt;
 
   // 에이전트 섭취 반영
   res = max(0.0, res - consumed);

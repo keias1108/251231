@@ -5,7 +5,7 @@
 
 import { GPUContext, resizeCanvas } from './gpu-context';
 import { createFieldSystem, FieldSystem } from '../systems/field-system';
-import { createAgentSystem, AgentSystem } from '../systems/agent-system';
+import { createAgentSystem, AgentSystem, EvolutionSample } from '../systems/agent-system';
 import { createFieldRenderer, FieldRenderer } from '../render/field-renderer';
 import { createAgentRenderer, AgentRenderer } from '../render/agent-renderer';
 import { createCamera, Camera } from '../render/camera';
@@ -41,6 +41,9 @@ export interface SimulationStats {
   uptake: number;
   time: number;
   paused: boolean;
+  evolutionSample: EvolutionSample;
+  evolutionBirths: EvolutionSample;
+  evolutionDeaths: EvolutionSample;
 }
 
 export interface ProbeData {
@@ -526,6 +529,9 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
       uptake: agentSystem.getRecentUptake(),
       time: simulationTime,
       paused,
+      evolutionSample: agentSystem.getEvolutionSample(),
+      evolutionBirths: agentSystem.getEvolutionBirths(),
+      evolutionDeaths: agentSystem.getEvolutionDeaths(),
     };
   }
 
