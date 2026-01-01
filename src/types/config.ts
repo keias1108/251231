@@ -28,7 +28,8 @@ export interface SimulationConfig {
   trailLength: number; // 궤적 길이 (프레임)
 
   // 시간 설정
-  timeScale: number; // 시간 배율 (1.0 = 기본)
+  timeScale: number; // dt 배율 (1.0 = 기본)
+  stepScale: number; // 배속(step): 초당 스텝 수 배율
 }
 
 export interface RenderConfig {
@@ -55,6 +56,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   agentScale: 1.2, // 에이전트 약간 크게
   trailLength: 16,
   timeScale: 1.0,
+  stepScale: 1.0,
 };
 
 export const DEFAULT_RENDER_CONFIG: RenderConfig = {

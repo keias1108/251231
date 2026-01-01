@@ -71,11 +71,11 @@ export function createInteraction(
       // 이동 (WASD / 화살표)
       case 'arrowup':
       case 'w':
-        camera.pan(0, -panSpeed);
+        camera.pan(0, panSpeed);
         break;
       case 'arrowdown':
       case 's':
-        camera.pan(0, panSpeed);
+        camera.pan(0, -panSpeed);
         break;
       case 'arrowleft':
       case 'a':

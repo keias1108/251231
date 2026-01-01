@@ -126,6 +126,9 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
 
   // 탭 전환/백그라운드에서 dt 폭주 방지
   const MAX_DELTA_TIME = 0.05; // seconds (20 FPS equivalent)
+  const FIXED_STEP_DT = 1 / 60; // seconds
+
+  let stepAccumulator = 0;
 
   // 리사이즈 핸들러
   function handleResize(): void {
@@ -420,8 +423,22 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
 
     // 일시정지가 아니면 시뮬레이션 업데이트
     if (!paused) {
-      simulationTime += deltaTime * config.timeScale;
-      update(deltaTime);
+      const stepScale = Number.isFinite(config.stepScale) ? config.stepScale : 1;
+      stepAccumulator += deltaTime * Math.max(0, stepScale);
+
+      // 과도한 루프 방지 (저사양/탭 복귀 등)
+      const maxStepsThisFrame = 240;
+      let steps = 0;
+
+      while (stepAccumulator >= FIXED_STEP_DT && steps < maxStepsThisFrame) {
+        simulationTime += FIXED_STEP_DT * config.timeScale;
+        update(FIXED_STEP_DT);
+        stepAccumulator -= FIXED_STEP_DT;
+        steps++;
+      }
+
+      // 누적이 너무 쌓이면 드롭 (spiral of death 방지)
+      stepAccumulator = Math.min(stepAccumulator, FIXED_STEP_DT);
     }
 
     // 렌더링 (항상)
@@ -467,6 +484,7 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
     if (running) return;
     running = true;
     lastFrameTime = 0;
+    stepAccumulator = 0;
     ensureProbeInterval();
     animationId = requestAnimationFrame(frame);
   }
@@ -477,6 +495,7 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
       cancelAnimationFrame(animationId);
       animationId = null;
     }
+    stepAccumulator = 0;
     if (probeIntervalId !== null) {
       clearInterval(probeIntervalId);
       probeIntervalId = null;
@@ -489,6 +508,7 @@ export function createSimulation(gpuContext: GPUContext): Simulation {
 
   function resume(): void {
     paused = false;
+    stepAccumulator = 0;
   }
 
   function setTimeScale(scale: number): void {

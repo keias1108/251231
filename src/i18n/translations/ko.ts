@@ -7,7 +7,8 @@ export const ko = {
   gui: {
     title: '생태계 시뮬레이션',
     simulation: '시뮬레이션',
-    timeScale: '시간 배율',
+    timeScale: '시간 배율 (dt)',
+    stepScale: '진짜배속 (step)',
     paused: '일시정지',
     environment: '환경',
     resourceGen: '자원 생성',

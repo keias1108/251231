@@ -84,21 +84,26 @@ export function createCamera(gridSize: number): Camera {
   }
 
   function pan(dx: number, dy: number): void {
-    // 월드 좌표 기준 이동 (그리드 정렬)
+    // 현재 카메라 yaw 각도 기준으로 XZ 평면에서 이동
     const panSpeed = (gridSize / 400) / zoom;
 
-    // 카메라 yaw 기준으로 월드 좌표 이동 계산
-    const cosY = Math.cos(rotationY);
-    const sinY = Math.sin(rotationY);
+    // rotationY(yaw)를 기준으로 right/forward 벡터 계산
+    // 카메라가 타겟을 바라보는 방향이 forward
+    const forwardX = -Math.sin(rotationY);
+    const forwardZ = -Math.cos(rotationY);
 
-    // 화면 드래그를 월드 XZ 평면 이동으로 변환
-    const worldMoveX = (-dx * cosY + dy * sinY) * panSpeed;
-    const worldMoveZ = (-dx * sinY - dy * cosY) * panSpeed;
+    // right 벡터: forward를 90도 회전
+    const rightX = -forwardZ;
+    const rightZ = forwardX;
 
-    targetPosition[0] += worldMoveX;
-    targetPosition[2] += worldMoveZ;
-    targetLookAt[0] += worldMoveX;
-    targetLookAt[2] += worldMoveZ;
+    // 드래그/키보드 입력을 월드 이동으로 변환
+    const deltaX = (dx * rightX + dy * forwardX) * panSpeed;
+    const deltaZ = (dx * rightZ + dy * forwardZ) * panSpeed;
+
+    targetPosition[0] += deltaX;
+    targetPosition[2] += deltaZ;
+    targetLookAt[0] += deltaX;
+    targetLookAt[2] += deltaZ;
 
     followTarget = null;  // 수동 이동 시 추적 해제
   }

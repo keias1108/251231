@@ -7,11 +7,49 @@ import { Simulation } from '../core/simulation';
 import { SimulationConfig, RenderConfig, DEFAULT_CONFIG, DEFAULT_RENDER_CONFIG } from '../types/config';
 import { t, onLanguageChange, setLanguage, getLanguage, Language } from '../i18n';
 
+const STORAGE_KEY_FOLDERS = 'ecosystem_folder_states';
+
 export interface Controls {
   gui: GUI;
   destroy(): void;
   saveConfig(): void;
   loadConfig(): void;
+}
+
+// 폴더 상태 저장/불러오기
+function loadFolderStates(): Record<string, boolean> {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_FOLDERS);
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveFolderStates(states: Record<string, boolean>): void {
+  localStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(states));
+}
+
+function setupFolderPersistence(folder: GUI, key: string, defaultClosed: boolean = false): void {
+  const states = loadFolderStates();
+
+  // 저장된 상태가 있으면 적용, 없으면 기본값 사용
+  if (key in states) {
+    if (states[key]) {
+      folder.close();
+    } else {
+      folder.open();
+    }
+  } else if (defaultClosed) {
+    folder.close();
+  }
+
+  // lil-gui의 onOpenClose 콜백 사용
+  folder.onOpenClose((gui: GUI) => {
+    const states = loadFolderStates();
+    states[key] = !gui._closed ? false : true;
+    saveFolderStates(states);
+  });
 }
 
 function saveConfigToFile(simulation: Simulation): void {
@@ -65,6 +103,75 @@ function triggerFileLoad(simulation: Simulation, onLoad?: () => void): void {
   input.click();
 }
 
+// 슬라이더 휠 감도 조정을 위한 함수
+function setupWheelSensitivity(gui: GUI): void {
+  const controllers: any[] = typeof (gui as any).controllersRecursive === 'function'
+    ? (gui as any).controllersRecursive()
+    : (() => {
+      const collected: any[] = [];
+
+      function collect(obj: any) {
+        if (obj.controllers) {
+          collected.push(...obj.controllers);
+        }
+        if (obj.folders) {
+          obj.folders.forEach((folder: any) => collect(folder));
+        }
+      }
+
+      collect(gui);
+      return collected;
+    })();
+
+  const wheelRemainderByController = new WeakMap<object, number>();
+
+  controllers.forEach((controller: any) => {
+    if (!controller?._normalizeMouseWheel) return;
+    if (controller.__ecosystemWheelPatched) return;
+    controller.__ecosystemWheelPatched = true;
+
+    controller._normalizeMouseWheel = function (e: WheelEvent) {
+      const anyEvent = e as any;
+
+      let notchUnits = 0;
+
+      if (Math.floor(e.deltaY) !== e.deltaY && anyEvent.wheelDelta) {
+        notchUnits = -(anyEvent.wheelDelta / 120);
+      } else {
+        const combined = e.deltaX + -e.deltaY;
+
+        if (e.deltaMode === 1) {
+          notchUnits = combined;
+        } else if (e.deltaMode === 2) {
+          notchUnits = combined * 3;
+        } else {
+          const approxNotches = combined / 100;
+
+          if (Math.abs(approxNotches) >= 0.75) {
+            notchUnits = Math.sign(approxNotches) * Math.max(1, Math.round(Math.abs(approxNotches)));
+          } else {
+            notchUnits = approxNotches;
+          }
+        }
+      }
+
+      if (e.shiftKey) notchUnits *= 10;
+      if (e.altKey) notchUnits /= 10;
+
+      if (Number.isInteger(notchUnits) && Math.abs(notchUnits) >= 1) {
+        wheelRemainderByController.set(this as object, 0);
+        return notchUnits;
+      }
+
+      const prev = wheelRemainderByController.get(this as object) ?? 0;
+      const next = prev + notchUnits;
+      const whole = next >= 0 ? Math.floor(next) : Math.ceil(next);
+      wheelRemainderByController.set(this as object, next - whole);
+      return whole;
+    };
+  });
+}
+
 export function createControls(simulation: Simulation): Controls {
   let gui: GUI;
   let unsubscribe: (() => void) | null = null;
@@ -82,14 +189,29 @@ export function createControls(simulation: Simulation): Controls {
       unsubscribe();
     }
 
+    // 현재 시뮬레이션 설정과 동기화 (GUI 재생성/로드 후 값 불일치 방지)
+    Object.assign(simConfig, simulation.getConfig());
+    Object.assign(renderConfigState, simulation.getRenderConfig());
+
     gui = new GUI({ title: t('gui.title') });
 
     // 시뮬레이션 폴더
     const simFolder = gui.addFolder(t('gui.simulation'));
+    setupFolderPersistence(simFolder, 'simulation', false);
 
-    simFolder.add({ timeScale: simConfig.timeScale! }, 'timeScale', 0, 5, 0.02)
+    simFolder.add(simConfig, 'timeScale', 0, 5, 0.02)
       .name(t('gui.timeScale'))
-      .onChange((value: number) => simulation.setTimeScale(value));
+      .onChange((value: number) => {
+        simConfig.timeScale = value;
+        simulation.updateConfig({ timeScale: value });
+      });
+
+    simFolder.add(simConfig, 'stepScale', 0, 10, 0.1)
+      .name(t('gui.stepScale'))
+      .onChange((value: number) => {
+        simConfig.stepScale = value;
+        simulation.updateConfig({ stepScale: value });
+      });
 
     simFolder.add({ pause: false }, 'pause')
       .name(t('gui.paused'))
@@ -100,6 +222,7 @@ export function createControls(simulation: Simulation): Controls {
 
     // 환경 폴더
     const envFolder = gui.addFolder(t('gui.environment'));
+    setupFolderPersistence(envFolder, 'environment', true);
 
     envFolder.add(simConfig, 'resourceGeneration', 0.01, 0.5, 0.002)
       .name(t('gui.resourceGen'))
@@ -119,6 +242,7 @@ export function createControls(simulation: Simulation): Controls {
 
     // 안정화 폴더
     const stabFolder = gui.addFolder(t('gui.stabilizers'));
+    setupFolderPersistence(stabFolder, 'stabilizers', true);
 
     stabFolder.add(simConfig, 'saturationK', 0.05, 20, 0.01)
       .name(t('gui.saturationK'))
@@ -130,6 +254,7 @@ export function createControls(simulation: Simulation): Controls {
 
     // 에너지/섭취 스케일 (UX: 먹고/죽는지 체감)
     const dynamicsFolder = gui.addFolder(t('gui.dynamics'));
+    setupFolderPersistence(dynamicsFolder, 'dynamics', true);
 
     dynamicsFolder.add(simConfig, 'uptakeScale', 0.01, 10.0, 0.01)
       .name(t('gui.uptakeScale'))
@@ -141,6 +266,7 @@ export function createControls(simulation: Simulation): Controls {
 
     // 시각화 폴더
     const visualFolder = gui.addFolder(t('gui.visualization'));
+    setupFolderPersistence(visualFolder, 'visualization', false);
 
     visualFolder.add(renderConfigState, 'showResource')
       .name(t('gui.showResource'))
@@ -168,12 +294,14 @@ export function createControls(simulation: Simulation): Controls {
 
     // 카메라 폴더
     const cameraFolder = gui.addFolder(t('gui.camera'));
+    setupFolderPersistence(cameraFolder, 'camera', true);
 
     cameraFolder.add({ resetCamera: () => simulation.getCamera().resetToDefault() }, 'resetCamera')
       .name(t('gui.resetCamera'));
 
     // 설정 폴더
     const settingsFolder = gui.addFolder(t('gui.settings'));
+    setupFolderPersistence(settingsFolder, 'settings', false);
 
     // 언어 선택
     const langOptions = { 'English': 'en', '한국어': 'ko' };
@@ -196,15 +324,14 @@ export function createControls(simulation: Simulation): Controls {
     settingsFolder.add({ reset: () => simulation.resetSimulation() }, 'reset')
       .name(t('gui.resetSim'));
 
-    // 일부 폴더 닫기
-    envFolder.close();
-    stabFolder.close();
-    dynamicsFolder.close();
-    cameraFolder.close();
-
     // 언어 변경 리스너
     unsubscribe = onLanguageChange(() => {
       buildGUI();
+    });
+
+    // 슬라이더 휠 감도 설정 (DOM이 생성된 후 적용)
+    requestAnimationFrame(() => {
+      setupWheelSensitivity(gui);
     });
   }
 

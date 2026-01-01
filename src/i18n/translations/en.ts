@@ -7,7 +7,8 @@ export const en = {
   gui: {
     title: 'Ecosystem Simulation',
     simulation: 'Simulation',
-    timeScale: 'Time Scale',
+    timeScale: 'Time Scale (dt)',
+    stepScale: 'Speed (step)',
     paused: 'Paused',
     environment: 'Environment',
     resourceGen: 'Resource Gen',
